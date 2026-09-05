@@ -813,7 +813,39 @@ func main() {
 		return
 	}
 
-	if cfg.Goal == "" {
+	// 智能交互选择：让用户自主决定是【全自动检测与部署】还是【描述问题由息壤定向排障】
+	if *taskFlag == "" && len(flag.Args()) == 0 {
+		fmt.Println("================================================================")
+		fmt.Println("🌱 息壤 (XiRang) 已就绪！请选择本次工作模式：")
+		fmt.Println("   [1] 全自动检测环境并执行配置 (默认)")
+		fmt.Println("   [2] 描述具体问题 / 报错排查 (定向诊断与自愈)")
+		fmt.Println("   [3] 启动售后急诊医生模式 (Doctor Mode)")
+		fmt.Println("================================================================")
+		fmt.Print("👉 请输入选项 [1-3] (按回车默认执行 1): ")
+
+		reader := bufio.NewReader(os.Stdin)
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(choice)
+
+		switch choice {
+		case "2":
+			fmt.Print("\n💬 请描述您遇到的问题、报错信息或期望息壤完成的任务: ")
+			problemDesc, _ := reader.ReadString('\n')
+			problemDesc = strings.TrimSpace(problemDesc)
+			if problemDesc != "" {
+				cfg.Goal = fmt.Sprintf("【用户指定排障目标】: %s。请结合当前目录规约深入探查现场、定位根因并全自主执行修复，通过终态验收验证。", problemDesc)
+			} else {
+				cfg.Goal = "检查当前环境并全自动完成部署与配置。"
+			}
+		case "3":
+			runDoctorMode(&cfg)
+			return
+		default:
+			if cfg.Goal == "" {
+				cfg.Goal = "检查当前环境并全自动完成部署与配置。"
+			}
+		}
+	} else if cfg.Goal == "" {
 		if len(flag.Args()) > 0 {
 			cfg.Goal = strings.Join(flag.Args(), " ")
 		} else {
