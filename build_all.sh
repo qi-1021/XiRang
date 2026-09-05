@@ -32,6 +32,10 @@ cp "dist/xirang.exe" "dist/zen_agent.exe"
 # 2. macOS (Apple Silicon / Intel)
 build_target "darwin" "arm64" "xirang_mac_apple_silicon"
 build_target "darwin" "amd64" "xirang_mac_intel"
+if [[ "$(uname)" == "Darwin" ]]; then
+    codesign --force --deep --sign - "dist/xirang_mac_apple_silicon" 2>/dev/null || true
+    codesign --force --deep --sign - "dist/xirang_mac_intel" 2>/dev/null || true
+fi
 cp "dist/xirang_mac_apple_silicon" "dist/xirang"
 
 # 3. Linux (AMD64 / ARM64 / ARMv7 / RISC-V / LoongArch / MIPS64LE)
