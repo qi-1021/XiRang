@@ -56,15 +56,15 @@ xirang -watchdog -interval 30
 xirang --rollback
 ```
 
-### 2. 模型通道配置（支持环境变量与配置文件）
+### 2. 模型通道配置原则（安全边界守卫）
 
-可通过标准环境变量开箱即用：
-```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_BASE_URL="https://api.openai.com/v1/chat/completions" # 可选，支持各大兼容中继
-export OPENAI_MODEL="gpt-4o"                                        # 可选
-```
-或在当前目录下提供 `xirang_config.json` 进行多提供商配置。
+> [!IMPORTANT]
+> **安全设计准则**：息壤**绝不在宿主操作系统的全局环境变量中盲目嗅探 API 密钥**，防止未经授权的 Token 盗用与隐私泄露。模型通道必须由调用者显式提供：
+
+1. **出厂加密熔炼（首选交付态）**：
+   使用 `builder` 将大模型通道、私有 API Key 与项目规约直接通过 **AES-256-GCM** 算法加密熔炼进单一二进制中，分发到目标机内存解密运行，外部不可见。
+2. **显式配置文件注入**：
+   在执行目录下放置受控的 `xirang_config.json` 文件（支持配置多个备用大模型通道）。
 
 ---
 

@@ -128,41 +128,7 @@ type Decision struct {
 	Milestone     string      `json:"milestone,omitempty"`
 }
 
-var defaultProviders = []Provider{
-	{
-		Name:  "默认推理通道 (可在 xirang_config.json 或环境变量中配置)",
-		URL:   "https://api.openai.com/v1/chat/completions",
-		Key:   "",
-		Model: "gpt-4o",
-		Headers: map[string]string{},
-	},
-}
-
-func initProviders() {
-	// 优先从标准环境变量获取 API Key 与端点
-	envKey := os.Getenv("XIRANG_API_KEY")
-	if envKey == "" {
-		envKey = os.Getenv("OPENAI_API_KEY")
-	}
-	envURL := os.Getenv("XIRANG_API_BASE")
-	if envURL == "" {
-		envURL = os.Getenv("OPENAI_BASE_URL")
-	}
-	envModel := os.Getenv("XIRANG_MODEL")
-	if envModel == "" {
-		envModel = os.Getenv("OPENAI_MODEL")
-	}
-
-	if envKey != "" {
-		defaultProviders[0].Key = envKey
-	}
-	if envURL != "" {
-		defaultProviders[0].URL = envURL
-	}
-	if envModel != "" {
-		defaultProviders[0].Model = envModel
-	}
-}
+var defaultProviders = []Provider{}
 
 // 统一工作空间隔离与持久化知识经验库 (.xirang/)
 var (
@@ -743,8 +709,6 @@ func main() {
 		return
 	}
 
-	initProviders()
-
 	// 基础配置
 	cfg := Config{
 		Goal:        *taskFlag,
@@ -814,6 +778,16 @@ func main() {
 				fmt.Printf("[*] 已加载外部配置: %s\n", targetConfigFile)
 			}
 		}
+	}
+
+	// 严格校验模型通道：绝不在操作系统全局环境中盲目嗅探，必须来自出厂加密嵌入或专用配置文件
+	if len(cfg.Providers) == 0 {
+		fmt.Println("[X] 未检测到可用的大模型推理通道配置！")
+		fmt.Println("    说明：息壤绝不在操作系统全局环境中随意嗅探 API Key。")
+		fmt.Println("    请通过以下安全方式之一提供模型通道：")
+		fmt.Println("    1. 使用 xirang_builder 将模型密钥与规约熔炼为 AES-256 加密二进制 (出厂交付态)；")
+		fmt.Println("    2. 在当前执行目录下提供受控的 xirang_config.json 配置文件。")
+		os.Exit(1)
 	}
 
 	if *doctorFlag {
