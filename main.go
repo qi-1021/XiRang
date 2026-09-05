@@ -876,7 +876,9 @@ func runAgentLoop(cfg *Config) {
    a. 分析当前目标项目的入口文件、端口需求、必须路径与终态验收命令；
    b. 自主编写严谨的 xirang_task_spec.json (明确 task_name, verification_cmd 硬性验收命令, milestones 里程碑, health_probes 探针，并严禁在规约中写死剥夺用户选择权的自动化逻辑)；
    c. 就地生成微型一键启动脚本 (如 1_双击全自动安装与配置.bat 或 run_installer.sh)，将可移动性与极简交互发挥到极致；
-   d. 若当前系统具备 Go 开发环境且用户需要出厂加密分发，可引导或直接调度 builder 编译出 AES-256 加密的单文件受保护交付程序 (xirang_protected.exe)。
+   d. 若当前系统具备 Go 开发环境且用户需要出厂加密分发，可直接在终端中静默调用创作构建工具进行 AES-256 熔炼打包：
+      'xirang_builder -spec 自定义规约.json -config 模型配置.json -os windows -out 安装器名称.exe'
+      以此完成模型密钥与业务规约的高强度加密混淆，输出 100% 独立的受保护交付单文件！
 5. 当用户要求你【配置你自己或修改息壤自身】时，你能像操作自己身体一样，直接为自身编写或挂载对应的 task_spec、配置守护探针或调优 .xirang/scripts/ 下的经验工具。
 
 【你可以直接执行的 10 项原生系统动作（必须输出严格的纯 JSON 格式）】:
