@@ -1,0 +1,87 @@
+# 🌱 息壤 (XiRang)
+
+> **“息壤者，言土自长息无限也。” ——《山海经》**
+
+---
+
+> [!WARNING]
+> **⚠️ 开发状态与破坏性变更预警 (Development Notice & Breaking Changes)**
+> 本项目目前仍处于极速迭代与探索实验阶段，**底层架构尚未完全固化**。
+> 在未来的版本演进中，**可能随时经历重大的破坏性改造（Breaking Changes）**，包括但不限于架构重构、规约协议更新或 CLI 行为调整。欢迎尝鲜与技术交流，生产环境应用请务必锁定特定 Commit。
+
+---
+
+## 📖 项目定位与设计哲学
+
+<!-- [USER SPACE: 你可以在此自由书写项目的立项初衷、背景故事、应用愿景与理念] -->
+
+息壤是一款面向现代与复杂异构计算环境的**超轻量、高可移动、强针对性**操作系统原生伴生自愈智能体。
+
+* **极致克制，绝不臃肿**：坚决摒弃 Chromium/Electron 以及重型 Python 虚拟环境的庞大冗余；原生单文件，零外部环境依赖，随插随用。
+* **帮人自愈，决不替人决策**：恪守人类决策主权。息壤负责现场探测与故障抢修，但在涉及资源分配、目录选址、模式变更等核心问题上，永远通过 `ask_human` 把决定权交还给人类。
+* **知己自衍 (Self-Bootstrapping)**：深刻理解息壤自身的架构规范，能根据新项目画像就地生成针对性任务规约与交付包。
+
+---
+
+## 🌟 核心特性速览
+
+<!-- [USER SPACE: 你可以在此自由补充或精简核心技术特性] -->
+
+- 🚀 **单兵空投（Single Binary）**：编译产物仅数兆，无任何运行时依赖，支持 12 种跨平台/跨架构（Windows / macOS / Linux / BSD / RISC-V / 龙芯 LoongArch 等）。
+- 🛡️ **终态硬性防作弊验收 (DoD Gate)**：以真实测试指令（如端点探活、真实推理测试）为唯一准绳，未通过测试绝不宣告结束。
+- ⚡ **0.2 秒秒级自愈 (Fast-Path Cache)**：过程脚本沉淀在 `.xirang/scripts/` 中，下次遇到同类问题直接调取本地经验秒级修复，0 Token 消耗。
+- 🩺 **终身售后陪伴**：内置急诊医生模式 (`-doctor`) 与后台静默心跳巡检守护 (`-watchdog`)。
+- ⏪ **安全事务级一键回滚 (`--rollback`)**：基于原子备份栈逆向撤销所有文件改动，100% 恢复环境原貌。
+
+---
+
+## 🚀 快速开始
+
+### 1. 运行方式
+
+```bash
+# 1. 针对具体项目任务规约执行全自动安装与配置
+xirang -spec xirang_task_spec.json
+
+# 2. 自然语言一次性任务执行
+xirang -task "检查当前环境并配置推理服务"
+
+# 3. 现场售后急诊医生模式（遇错随呼随到）
+xirang -doctor
+
+# 4. 常驻后台售后心跳巡检（30秒心跳自动自愈）
+xirang -watchdog -interval 30
+
+# 5. 一键事务回滚（撤销修改，恢复纯净系统）
+xirang --rollback
+```
+
+### 2. 模型通道配置（支持环境变量与配置文件）
+
+可通过标准环境变量开箱即用：
+```bash
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_BASE_URL="https://api.openai.com/v1/chat/completions" # 可选，支持各大兼容中继
+export OPENAI_MODEL="gpt-4o"                                        # 可选
+```
+或在当前目录下提供 `xirang_config.json` 进行多提供商配置。
+
+---
+
+## 🛠️ 编译与构建
+
+```bash
+# 编译本地宿主二进制
+go build -ldflags="-s -w" -o xirang main.go embedded_default.go
+
+# 运行跨平台多架构全矩阵自动化交叉编译
+bash build_all.sh
+```
+
+---
+
+<!-- [USER SPACE: 底部预留空间，供后续添加社区交流、路线图 Roadmap、贡献指南与协议许可等] -->
+
+## 📄 License & Roadmap
+
+*开发与演进中...*

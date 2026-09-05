@@ -1,0 +1,30 @@
+# Binaries and compiled targets
+dist/
+dist_protected/
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+*.out
+embedded_config.go
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local runtime data
+.xirang/
+.zen/
+*.log
+
+# Sensitive private configurations
+*secret*
+*private*
+xirang_config.json
+zen_config.json

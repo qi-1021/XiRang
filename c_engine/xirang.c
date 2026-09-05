@@ -1,0 +1,164 @@
+/*
+ * ==============================================================================
+ *  息壤 (XiRang) v4.0 C89/C99 纯原生单文件实现:
+ *  - 适用平台: 任何装有 gcc / clang / msvc / tcc / zig 的机器 (含 Win11 24H2)
+ *  - 绝不依赖已被 Windows 废弃的 wmic
+ *  - 增强型 JSON 解析: 完美兼容 content 为 null 但 reasoning_content 有数据的推理大模型
+ *  - 编译指令: 
+ *      Linux/Mac:   gcc -O2 xirang.c -o xirang
+ *      Windows:     cl /O2 xirang.c   或   gcc xirang.c -o xirang.exe
+ *      TinyCC(极小): tcc xirang.c -o xirang
+ * ==============================================================================
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+  #include <windows.h>
+#else
+  #include <unistd.h>
+#endif
+
+#define API_URL "https://api.openai.com/v1/chat/completions"
+#define API_KEY "your-api-key-here"
+#define MODEL "gpt-4o"
+
+/* 执行系统终端命令并获取输出 (纯标准 popen / _popen，零 wmic 依赖) */
+int run_command(const char *cmd, char *out_buf, size_t max_len) {
+    FILE *fp;
+    out_buf[0] = '\0';
+#ifdef _WIN32
+    fp = _popen(cmd, "r");
+#else
+    fp = popen(cmd, "r");
+#endif
+    if (!fp) return -1;
+
+    size_t bytes_read = fread(out_buf, 1, max_len - 1, fp);
+    out_buf[bytes_read] = '\0';
+
+#ifdef _WIN32
+    return _pclose(fp);
+#else
+    return pclose(fp);
+#endif
+}
+
+/* 使用宿主系统原生网络工具发起大模型请求 (兼容 curl / PowerShell) */
+int call_mimo(const char *prompt, char *resp_buf, size_t max_len) {
+    char cmd[8192];
+
+    FILE *req_fp = fopen("zen_req.tmp", "w");
+    if (!req_fp) return -1;
+
+    fprintf(req_fp, "{\"model\":\"%s\",\"messages\":["
+                    "{\"role\":\"system\",\"content\":\"你是 ZenAgent 纯 C 原生自愈智能体。你必须只输出纯 JSON: {\\\"action\\\":\\\"run_command\\\"|\\\"finish\\\",\\\"command\\\":\\\"...\\\",\\\"thought\\\":\\\"...\\\",\\\"explanation\\\":\\\"...\\\"}\"},"
+                    "{\"role\":\"user\",\"content\":\"%s\"}],\"max_tokens\":1500,\"temperature\":0.1}",
+                    MODEL, prompt);
+    fclose(req_fp);
+
+#ifdef _WIN32
+    /* Windows 优先使用 curl，若无则使用 PowerShell 原生 Invoke-RestMethod，绝无 wmic */
+    snprintf(cmd, sizeof(cmd),
+             "curl.exe -s -k -X POST \"%s\" -H \"Authorization: Bearer %s\" -H \"Content-Type: application/json\" -H \"User-Agent: opencode/1.0.0\" -d @zen_req.tmp 2>nul || "
+             "powershell -NoProfile -Command \"$b = Get-Content zen_req.tmp -Raw; Invoke-RestMethod -Uri '%s' -Method Post -Headers @{'Authorization'='Bearer %s';'User-Agent'='opencode/1.0.0'} -ContentType 'application/json' -Body $b | ConvertTo-Json -Compress\"",
+             API_URL, API_KEY, API_URL, API_KEY);
+#else
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -k -X POST \"%s\" -H \"Authorization: Bearer %s\" -H \"Content-Type: application/json\" -H \"User-Agent: opencode/1.0.0\" -d @zen_req.tmp 2>/dev/null",
+             API_URL, API_KEY);
+#endif
+
+    run_command(cmd, resp_buf, max_len);
+    remove("zen_req.tmp");
+    return 0;
+}
+
+/* 鲁棒提取 JSON 字段 (支持从 content 或 reasoning_content 混合推断) */
+void extract_json_field(const char *json, const char *field, char *out, size_t max_len) {
+    char pattern[64];
+    snprintf(pattern, sizeof(pattern), "\"%s\":\"", field);
+    out[0] = '\0';
+
+    char *start = strstr(json, pattern);
+    if (!start) {
+        /* 尝试宽松匹配 (无引号数字或转义反斜杠) */
+        snprintf(pattern, sizeof(pattern), "\\\"%s\\\":\\\"", field);
+        start = strstr(json, pattern);
+        if (!start) return;
+    }
+
+    start += strlen(pattern);
+    char *end = strchr(start, '"');
+    if (!end) {
+        end = strstr(start, "\\\"");
+    }
+    if (!end) return;
+
+    size_t len = end - start;
+    if (len >= max_len) len = max_len - 1;
+
+    strncpy(out, start, len);
+    out[len] = '\0';
+}
+
+int main(int argc, char *argv[]) {
+    char task[512] = "检查当前系统环境并完成自愈配置。";
+    if (argc > 1) {
+        strncpy(task, argv[1], sizeof(task) - 1);
+    }
+
+    printf("================================================================\n");
+    printf("    ⚡ ZEN-AGENT (C 原生纯净引擎 v3.0) - 零外部依赖\n");
+    printf("    (原生兼容 Win11 24H2+, 零 wmic 依赖, 任意 C 编译器秒级运行)\n");
+    printf("================================================================\n");
+    printf("[*] 核心目标: %s\n\n", task);
+
+    char history[4096] = "系统初始化完成。";
+    char resp[32768];
+    char action[64], cmd[2048], explanation[1024];
+
+    int step = 1;
+    for (step = 1; step <= 25; step++) {
+        char prompt[6144];
+        snprintf(prompt, sizeof(prompt), "【总目标】: %s \\n【历史回执】: %s \\n请给出下一步行动命令：", task, history);
+
+        printf("\n[Step %d] 正在向云端大模型请求下一步自愈动作...\n", step);
+        if (call_mimo(prompt, resp, sizeof(resp)) != 0 || strlen(resp) == 0) {
+            printf("[!] 网络连接中断或未取得响应，正在准备自愈重试...\n");
+            continue;
+        }
+
+        extract_json_field(resp, "action", action, sizeof(action));
+        extract_json_field(resp, "command", cmd, sizeof(cmd));
+        extract_json_field(resp, "explanation", explanation, sizeof(explanation));
+
+        printf("⚡ [决策]: %s\n", strlen(explanation) > 0 ? explanation : "执行指令");
+
+        if (strcmp(action, "finish") == 0) {
+            printf("\n🎉 [成功] ZenAgent C 原生引擎确认：所有配置已经全部自愈达成！\n");
+            break;
+        }
+
+        if (strlen(cmd) > 0) {
+            printf("💻 执行: %s\n", cmd);
+            char out[2048];
+            int ret = run_command(cmd, out, sizeof(out));
+            printf("   -> 退出码: %d\n", ret);
+
+            char step_log[2560];
+            snprintf(step_log, sizeof(step_log), "\\n[Step %d CMD]: %s\\n[CODE]: %d\\n[OUT]: %.500s", step, cmd, ret, out);
+            strncat(history, step_log, sizeof(history) - strlen(history) - 1);
+        } else {
+            printf("[!] 未解析到动作，将继续下一步推演...\n");
+        }
+#ifdef _WIN32
+        Sleep(1000);
+#else
+        sleep(1);
+#endif
+    }
+    return 0;
+}
