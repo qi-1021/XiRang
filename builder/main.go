@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"zenagent/builder/gui"
 )
 
 type Provider struct {
@@ -96,6 +98,7 @@ func readLine(reader *bufio.Reader, prompt, defaultValue string) string {
 }
 
 func main() {
+	guiFlag := flag.Bool("gui", false, "启动息壤工坊图形化控制台 (XiRang Studio Web GUI)")
 	specPathFlag := flag.String("spec", "", "直接传入外部 task_spec.json 规范文件路径（免交互）")
 	configPathFlag := flag.String("config", "", "直接传入包含模型密钥的 xirang_config.json 路径（免交互）")
 	targetOSFlag := flag.String("os", "", "出厂目标操作系统 (windows / darwin / linux)")
@@ -103,12 +106,22 @@ func main() {
 	secretKeyFlag := flag.String("secret", "", "自定义混淆盐 (留空自动生成高熵随机盐)")
 	flag.Parse()
 
+	projectRoot, _ := filepath.Abs("../")
+	distDir := filepath.Join(projectRoot, "dist_protected")
+
+	// 模式 0：图形化创作工坊 (GUI 模式)
+	if *guiFlag {
+		server := gui.NewForgeServer(projectRoot)
+		if err := server.Start(true); err != nil {
+			fmt.Printf("[X] 启动图形控制台失败: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	var cfg BuildConfig
 	cfg.MaxSteps = 40
 	cfg.TimeoutSec = 300
-
-	projectRoot, _ := filepath.Abs("../")
-	distDir := filepath.Join(projectRoot, "dist_protected")
 
 	// 模式 A：非交互式静默构建模式（专供人类脚本或上层 AI 自动化调用）
 	if *specPathFlag != "" || *configPathFlag != "" {

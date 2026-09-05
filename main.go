@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"zenagent/builder/gui"
 )
 
 // Provider 配置结构
@@ -702,7 +704,18 @@ func main() {
 	watchdogFlag := flag.Bool("watchdog", false, "启动常驻售后巡检守护模式 (服务挂掉自动自愈)")
 	intervalFlag := flag.Int("interval", 30, "售后巡检间隔秒数 (默认 30 秒)")
 	doctorFlag := flag.Bool("doctor", false, "启动售后急诊医生交互模式 (有报错/有问题随时找它)")
+	forgeFlag := flag.Bool("forge", false, "启动息壤工坊图形创作控制台 (XiRang Studio GUI)")
+	guiAliasFlag := flag.Bool("gui", false, "启动息壤工坊图形创作控制台 (同 -forge)")
 	flag.Parse()
+
+	if *forgeFlag || *guiAliasFlag {
+		server := gui.NewForgeServer(".")
+		if err := server.Start(true); err != nil {
+			fmt.Printf("[X] 启动息壤工坊失败: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *rollbackFlag {
 		executeRollback()
