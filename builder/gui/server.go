@@ -472,7 +472,7 @@ else
     echo "[!] 未找到 Linux/Mac 息壤二进制，请检查目录！"
 fi
 `
-	_ = os.WriteFile(filepath.Join(targetDir, "1_双击启动息壤.bat"), []byte(batContent), 0755)
+	_ = os.WriteFile(filepath.Join(targetDir, "使用息壤配置.bat"), []byte(batContent), 0755)
 	_ = os.WriteFile(filepath.Join(targetDir, "run_xirang.sh"), []byte(shContent), 0755)
 
 	w.Header().Set("Content-Type", "application/json")
