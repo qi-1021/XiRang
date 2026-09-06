@@ -464,6 +464,8 @@ cd "$(dirname "$0")"
 echo "🌱 息壤 (XiRang) 正在就地接管并自愈配置..."
 if [ -f "./xirang_mac" ]; then
     chmod +x ./xirang_mac
+    xattr -d com.apple.quarantine ./xirang_mac 2>/dev/null || true
+    codesign -v ./xirang_mac 2>/dev/null || codesign --force --deep --sign - ./xirang_mac 2>/dev/null || true
     ./xirang_mac -spec xirang_task_spec.json
 elif [ -f "./xirang_linux" ]; then
     chmod +x ./xirang_linux
@@ -575,6 +577,10 @@ const (
 	if err != nil {
 		http.Error(w, fmt.Sprintf("交叉编译失败: %v\n%s", err, string(output)), http.StatusInternalServerError)
 		return
+	}
+
+	if req.TargetOS == "darwin" && runtime.GOOS == "darwin" {
+		_ = exec.Command("codesign", "--force", "--deep", "--sign", "-", outPath).Run()
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -221,6 +221,9 @@ const (
 			fmt.Printf("[X] 编译失败: %v\n%s\n", err, string(output))
 			os.Exit(1)
 		}
+		if targetOS == "darwin" && runtime.GOOS == "darwin" {
+			_ = exec.Command("codesign", "--force", "--deep", "--sign", "-", outPath).Run()
+		}
 		fmt.Printf("✅ [出厂加固成功] 专有独立安装包已就绪:\n   %s\n", outPath)
 		return
 	}
@@ -361,6 +364,9 @@ const (
 		if err != nil {
 			fmt.Printf("[X] 编译失败: %v\n%s\n", err, string(output))
 		} else {
+			if goos == "darwin" && runtime.GOOS == "darwin" {
+				_ = exec.Command("codesign", "--force", "--deep", "--sign", "-", outPath).Run()
+			}
 			fmt.Printf("✅ 编译成功！出厂绑定所有规约与工具的独立程序已输出到:\n   %s\n", outPath)
 		}
 	}
