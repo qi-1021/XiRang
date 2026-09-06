@@ -72,9 +72,10 @@ type Milestone struct {
 }
 
 type InceptionRequest struct {
-	TargetFolder string   `json:"target_folder"`
-	TaskSpec     TaskSpec `json:"task_spec"`
-	ModelConfig  struct {
+	TargetFolder    string   `json:"target_folder"`
+	TaskSpec        TaskSpec `json:"task_spec"`
+	TargetPlatforms []string `json:"target_platforms"` // 可选平台列表: win_x64, win_legacy, win_arm64, mac_arm64, mac_intel, linux_x64, linux_arm64, linux_armv7
+	ModelConfig     struct {
 		Url   string `json:"url"`
 		Key   string `json:"key"`
 		Model string `json:"model"`
@@ -438,18 +439,52 @@ func (s *ForgeServer) handleIncept(w http.ResponseWriter, r *http.Request) {
 		_ = os.WriteFile(filepath.Join(targetDir, "xirang_config.json"), cfgBytes, 0600)
 	}
 
-	// 3. 复制全套跨平台矩阵二进制（若存在则复制）
+	// 3. 依据用户在工坊中的自主勾选，派发指定平台的二进制
 	distDir := filepath.Join(s.ProjectRoot, "dist")
-	_ = copyFile(filepath.Join(distDir, "xirang_win_x64.exe"), filepath.Join(targetDir, "xirang.exe"))
-	_ = copyFile(filepath.Join(distDir, "xirang_win_x86_legacy.exe"), filepath.Join(targetDir, "xirang_win_legacy.exe"))
-	_ = copyFile(filepath.Join(distDir, "xirang_win_arm64.exe"), filepath.Join(targetDir, "xirang_win_arm64.exe"))
-	_ = copyFile(filepath.Join(distDir, "xirang_mac_apple_silicon"), filepath.Join(targetDir, "xirang_mac_arm64"))
-	_ = copyFile(filepath.Join(distDir, "xirang_mac_intel"), filepath.Join(targetDir, "xirang_mac_intel"))
-	_ = copyFile(filepath.Join(distDir, "xirang_mac_apple_silicon"), filepath.Join(targetDir, "xirang_mac"))
-	_ = copyFile(filepath.Join(distDir, "xirang_linux_x64"), filepath.Join(targetDir, "xirang_linux_x64"))
-	_ = copyFile(filepath.Join(distDir, "xirang_linux_arm64_aarch64"), filepath.Join(targetDir, "xirang_linux_arm64"))
-	_ = copyFile(filepath.Join(distDir, "xirang_linux_armv7_raspberrypi"), filepath.Join(targetDir, "xirang_linux_armv7"))
-	_ = copyFile(filepath.Join(distDir, "xirang_linux_x64"), filepath.Join(targetDir, "xirang_linux"))
+	hasPlatform := func(p string) bool {
+		if len(req.TargetPlatforms) == 0 {
+			return true // 未指定时默认全矩阵适配
+		}
+		for _, item := range req.TargetPlatforms {
+			if strings.EqualFold(item, p) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if hasPlatform("win_x64") {
+		_ = copyFile(filepath.Join(distDir, "xirang_win_x64.exe"), filepath.Join(targetDir, "xirang.exe"))
+	}
+	if hasPlatform("win_legacy") {
+		_ = copyFile(filepath.Join(distDir, "xirang_win_x86_legacy.exe"), filepath.Join(targetDir, "xirang_win_legacy.exe"))
+	}
+	if hasPlatform("win_arm64") {
+		_ = copyFile(filepath.Join(distDir, "xirang_win_arm64.exe"), filepath.Join(targetDir, "xirang_win_arm64.exe"))
+	}
+	if hasPlatform("mac_arm64") {
+		_ = copyFile(filepath.Join(distDir, "xirang_mac_apple_silicon"), filepath.Join(targetDir, "xirang_mac_arm64"))
+		_ = copyFile(filepath.Join(distDir, "xirang_mac_apple_silicon"), filepath.Join(targetDir, "xirang_mac"))
+	}
+	if hasPlatform("mac_intel") {
+		_ = copyFile(filepath.Join(distDir, "xirang_mac_intel"), filepath.Join(targetDir, "xirang_mac_intel"))
+		if !hasPlatform("mac_arm64") {
+			_ = copyFile(filepath.Join(distDir, "xirang_mac_intel"), filepath.Join(targetDir, "xirang_mac"))
+		}
+	}
+	if hasPlatform("linux_x64") {
+		_ = copyFile(filepath.Join(distDir, "xirang_linux_x64"), filepath.Join(targetDir, "xirang_linux_x64"))
+		_ = copyFile(filepath.Join(distDir, "xirang_linux_x64"), filepath.Join(targetDir, "xirang_linux"))
+	}
+	if hasPlatform("linux_arm64") {
+		_ = copyFile(filepath.Join(distDir, "xirang_linux_arm64_aarch64"), filepath.Join(targetDir, "xirang_linux_arm64"))
+		if !hasPlatform("linux_x64") {
+			_ = copyFile(filepath.Join(distDir, "xirang_linux_arm64_aarch64"), filepath.Join(targetDir, "xirang_linux"))
+		}
+	}
+	if hasPlatform("linux_armv7") {
+		_ = copyFile(filepath.Join(distDir, "xirang_linux_armv7_raspberrypi"), filepath.Join(targetDir, "xirang_linux_armv7"))
+	}
 
 	// 4. 生成超强全兼容 Windows 批处理（兼容 Win 7 / Win 10 / Win 11 / 32位老机器 / 64位 / ARM64）
 	batContent := `@echo off

@@ -367,12 +367,74 @@ const IndexHTML = `<!DOCTYPE html>
             <hr style="border: 0; border-top: 1px solid var(--border); margin: 20px 0;">
 
             <div class="card-header">
-                <span>🚀 第四步：交付与植入</span>
+                <span>🚀 第四步：选择派发平台与交付植入</span>
+                <span style="font-size: 12px; color: var(--accent); font-weight: normal;">高度选择性 · 拒绝冗余体积</span>
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div class="form-group">
+                <label style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>勾选本次需要派发的系统架构二进制：</span>
+                    <span style="font-size: 11px; display: flex; gap: 8px;">
+                        <a href="javascript:void(0)" onclick="selectPlatforms('all')" style="color: #38bdf8; text-decoration: none;">[全选]</a>
+                        <a href="javascript:void(0)" onclick="selectPlatforms('win')" style="color: #38bdf8; text-decoration: none;">[仅Windows]</a>
+                        <a href="javascript:void(0)" onclick="selectPlatforms('mac')" style="color: #38bdf8; text-decoration: none;">[仅macOS]</a>
+                        <a href="javascript:void(0)" onclick="selectPlatforms('linux')" style="color: #38bdf8; text-decoration: none;">[仅Linux/Android]</a>
+                    </span>
+                </label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: var(--bg-input); padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 12px;">
+                    <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="win_x64" checked> 🪟 Windows x64 (主流 64位)
+                    </label>
+                    <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="win_legacy" checked> 🏛️ Win 7 / 32位老机器 (x86)
+                    </label>
+                    <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="win_arm64"> 💻 Windows ARM64 (Surface等)
+                    </label>
+                    <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="mac_arm64" checked> 🍎 macOS (Apple Silicon M1~M4)
+                    </label>
+                    <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="mac_intel"> 🖥️ macOS (Intel x86_64)
+                    </label>
+                    <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="linux_x64" checked> 🐧 Linux x86_64 (服务器/PC)
+                    </label>
+                    <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="linux_arm64"> 📱 Linux / Android Termux (ARM64)
+                    </label>
+                    <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="linux_armv7"> 🍓 树莓派 / 嵌入式 (ARMv7)
+                    </label>
+                </div>
+            </div>
+
+            <div style="background: rgba(245, 158, 11, 0.05); border: 1px solid var(--border); padding: 12px; border-radius: 8px; margin-top: 14px;">
+                <label style="color: var(--gold); margin-bottom: 8px;">🔒 熔炼独立程序专属选项：</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div>
+                        <label style="font-size: 11px;">目标系统</label>
+                        <select id="build_os" onchange="updateArchOptions()">
+                            <option value="windows">Windows (.exe)</option>
+                            <option value="darwin">macOS</option>
+                            <option value="linux">Linux / Android</option>
+                            <option value="freebsd">FreeBSD</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 11px;">目标 CPU 架构</label>
+                        <select id="build_arch">
+                            <option value="amd64">AMD64 / x86_64 (主流)</option>
+                            <option value="386">386 / 32位老旧架构 (Win 7/奔腾)</option>
+                            <option value="arm64">ARM64 (Surface / 移动端)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px;">
                 <button class="btn-secondary" style="height: 48px;" onclick="deployInception()">
-                    🌱 就地植入副本<br><span style="font-size: 11px; font-weight: normal; color: var(--text-sub);">写出规约与双击启动脚本</span>
+                    🌱 就地植入选定副本<br><span style="font-size: 11px; font-weight: normal; color: var(--text-sub);">写出规约、启动脚本与选定架构</span>
                 </button>
                 <button class="btn-gold" style="height: 48px;" onclick="buildEncryptedBinary()">
                     🔒 熔炼独立加密程序<br><span style="font-size: 11px; font-weight: normal; color: #0f172a;">AES-256 出厂防篡改打包</span>
@@ -509,13 +571,30 @@ const IndexHTML = `<!DOCTYPE html>
         };
     }
 
+    function selectPlatforms(preset) {
+        const cbs = document.querySelectorAll('input[name="platform_choice"]');
+        cbs.forEach(cb => {
+            if (preset === 'all') {
+                cb.checked = true;
+            } else if (preset === 'win') {
+                cb.checked = cb.value.startsWith('win_');
+            } else if (preset === 'mac') {
+                cb.checked = cb.value.startsWith('mac_');
+            } else if (preset === 'linux') {
+                cb.checked = cb.value.startsWith('linux_');
+            }
+        });
+    }
+
     async function deployInception() {
         const folder = document.getElementById("folder_path").value.trim();
         const spec = getFormTaskSpec();
         const statusEl = document.getElementById("deploy_status");
         statusEl.className = "status-msg";
-        statusEl.innerText = "正在向目标文件夹写入规约与双击启动器...";
+        statusEl.innerText = "正在向目标文件夹写入规约、精选平台架构与启动器...";
         statusEl.style.display = "block";
+
+        const selectedPlatforms = Array.from(document.querySelectorAll('input[name="platform_choice"]:checked')).map(cb => cb.value);
 
         try {
             const resp = await fetch("/api/incept", {
@@ -524,6 +603,7 @@ const IndexHTML = `<!DOCTYPE html>
                 body: JSON.stringify({
                     target_folder: folder,
                     task_spec: spec,
+                    target_platforms: selectedPlatforms,
                     model_config: {
                         url: document.getElementById("api_url").value.trim(),
                         key: document.getElementById("api_key").value.trim(),
@@ -540,6 +620,29 @@ const IndexHTML = `<!DOCTYPE html>
         }
     }
 
+    function updateArchOptions() {
+        const os = document.getElementById("build_os").value;
+        const archSelect = document.getElementById("build_arch");
+        archSelect.innerHTML = "";
+
+        if (os === "windows") {
+            archSelect.innerHTML = '<option value="amd64">AMD64 / x86_64 (主流 64位)</option>' +
+                '<option value="386">386 / 32位老旧架构 (Win 7/奔腾)</option>' +
+                '<option value="arm64">ARM64 (Surface / Windows 移动端)</option>';
+        } else if (os === "darwin") {
+            archSelect.innerHTML = '<option value="arm64">Apple Silicon (M1/M2/M3/M4)</option>' +
+                '<option value="amd64">Intel (x86_64)</option>';
+        } else if (os === "linux") {
+            archSelect.innerHTML = '<option value="amd64">x86_64 / AMD64 (服务器与PC)</option>' +
+                '<option value="arm64">ARM64 / aarch64 (Android Termux / 现代ARM)</option>' +
+                '<option value="arm">ARMv7 (树莓派 / 早期嵌入式)</option>' +
+                '<option value="riscv64">RISC-V 64</option>' +
+                '<option value="loong64">龙芯 LoongArch64</option>';
+        } else if (os === "freebsd") {
+            archSelect.innerHTML = '<option value="amd64">AMD64 (x86_64)</option>';
+        }
+    }
+
     async function buildEncryptedBinary() {
         const apiKey = document.getElementById("api_key").value.trim();
         if (!apiKey) {
@@ -552,14 +655,20 @@ const IndexHTML = `<!DOCTYPE html>
         statusEl.innerText = "⏳ 正在进行 AES-256-GCM 强加密并调用 Go 编译器交叉编译独立程序，请稍候...";
         statusEl.style.display = "block";
 
+        const targetOS = document.getElementById("build_os").value;
+        const targetArch = document.getElementById("build_arch").value;
+        const ext = (targetOS === "windows") ? ".exe" : "";
+        const baseName = (spec.task_name ? spec.task_name.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, "_") : "xirang_installer");
+        const outName = baseName + "_" + targetOS + "_" + targetArch + ext;
+
         try {
             const resp = await fetch("/api/build", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    target_os: "windows",
-                    target_arch: "amd64",
-                    output_name: (spec.task_name || "xirang_installer") + ".exe",
+                    target_os: targetOS,
+                    target_arch: targetArch,
+                    output_name: outName,
                     secret_key: "xirang-forge-" + Date.now(),
                     task_spec: spec,
                     model_config: {
