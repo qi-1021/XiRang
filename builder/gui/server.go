@@ -438,42 +438,148 @@ func (s *ForgeServer) handleIncept(w http.ResponseWriter, r *http.Request) {
 		_ = os.WriteFile(filepath.Join(targetDir, "xirang_config.json"), cfgBytes, 0600)
 	}
 
-	// 3. 复制预编译好的可执行体
+	// 3. 复制全套跨平台矩阵二进制（若存在则复制）
 	distDir := filepath.Join(s.ProjectRoot, "dist")
 	_ = copyFile(filepath.Join(distDir, "xirang_win_x64.exe"), filepath.Join(targetDir, "xirang.exe"))
+	_ = copyFile(filepath.Join(distDir, "xirang_win_x86_legacy.exe"), filepath.Join(targetDir, "xirang_win_legacy.exe"))
+	_ = copyFile(filepath.Join(distDir, "xirang_win_arm64.exe"), filepath.Join(targetDir, "xirang_win_arm64.exe"))
+	_ = copyFile(filepath.Join(distDir, "xirang_mac_apple_silicon"), filepath.Join(targetDir, "xirang_mac_arm64"))
+	_ = copyFile(filepath.Join(distDir, "xirang_mac_intel"), filepath.Join(targetDir, "xirang_mac_intel"))
 	_ = copyFile(filepath.Join(distDir, "xirang_mac_apple_silicon"), filepath.Join(targetDir, "xirang_mac"))
+	_ = copyFile(filepath.Join(distDir, "xirang_linux_x64"), filepath.Join(targetDir, "xirang_linux_x64"))
+	_ = copyFile(filepath.Join(distDir, "xirang_linux_arm64_aarch64"), filepath.Join(targetDir, "xirang_linux_arm64"))
+	_ = copyFile(filepath.Join(distDir, "xirang_linux_armv7_raspberrypi"), filepath.Join(targetDir, "xirang_linux_armv7"))
 	_ = copyFile(filepath.Join(distDir, "xirang_linux_x64"), filepath.Join(targetDir, "xirang_linux"))
 
-	// 4. 生成双击运行批处理与脚本
+	// 4. 生成超强全兼容 Windows 批处理（兼容 Win 7 / Win 10 / Win 11 / 32位老机器 / 64位 / ARM64）
 	batContent := `@echo off
-chcp 65001 >nul
-title 息壤 (XiRang) - 专属副本运行中
+rem 兼容 Windows 7 / 8 / 10 / 11 / Server / 32位 / 64位 / ARM64
+chcp 65001 >nul 2>&1
+title 息壤 (XiRang) - 专属配置与自愈
 echo ================================================================
 echo    🌱 息壤 (XiRang) 正在就地接管并自愈配置...
 echo ================================================================
-if exist xirang.exe (
-    xirang.exe -spec xirang_task_spec.json
-) else (
-    echo [!] 未检测到 xirang.exe 执行文件，请将息壤放入本目录！
-    pause
+echo.
+
+set "TARGET_EXE="
+
+rem 优先检测 64 位系统与对应二进制
+if defined PROCESSOR_ARCHITEW6432 (
+    if exist "%~dp0xirang.exe" set "TARGET_EXE=%~dp0xirang.exe"
+) else if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+    if exist "%~dp0xirang.exe" set "TARGET_EXE=%~dp0xirang.exe"
+) else if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+    if exist "%~dp0xirang_win_arm64.exe" set "TARGET_EXE=%~dp0xirang_win_arm64.exe"
+    if not defined TARGET_EXE if exist "%~dp0xirang.exe" set "TARGET_EXE=%~dp0xirang.exe"
 )
+
+rem 回落至 32 位通用老旧架构 (Windows 7 / 早期奔腾老机器)
+if not defined TARGET_EXE (
+    if exist "%~dp0xirang_win_legacy.exe" (
+        set "TARGET_EXE=%~dp0xirang_win_legacy.exe"
+    ) else if exist "%~dp0xirang.exe" (
+        set "TARGET_EXE=%~dp0xirang.exe"
+    )
+)
+
+if not defined TARGET_EXE (
+    echo [X] 错误: 未在当前目录找到适配当前架构的息壤核心程序！
+    echo     请确保 xirang.exe 或 xirang_win_legacy.exe 存在。
+    pause
+    exit /b 1
+)
+
+echo [*] 正在启动执行体: %TARGET_EXE%
+"%TARGET_EXE%" -spec "%~dp0xirang_task_spec.json"
+if errorlevel 1 (
+    echo.
+    echo [!] 息壤执行返回异常代码: %errorlevel%
+)
+echo.
 pause
 `
-	shContent := `#!/usr/bin/env bash
-cd "$(dirname "$0")"
-echo "🌱 息壤 (XiRang) 正在就地接管并自愈配置..."
-if [ -f "./xirang_mac" ]; then
-    chmod +x ./xirang_mac
-    xattr -d com.apple.quarantine ./xirang_mac 2>/dev/null || true
-    codesign -v ./xirang_mac 2>/dev/null || codesign --force --deep --sign - ./xirang_mac 2>/dev/null || true
-    ./xirang_mac -spec xirang_task_spec.json
-elif [ -f "./xirang_linux" ]; then
-    chmod +x ./xirang_linux
-    ./xirang_linux -spec xirang_task_spec.json
-else
-    echo "[!] 未找到 Linux/Mac 息壤二进制，请检查目录！"
+
+	// 5. 生成跨平台全兼容 Shell 脚本（兼容 macOS、各类 Linux 发行版、树莓派、Android Termux）
+	shContent := `#!/bin/sh
+# 跨平台兼容脚本: macOS (Intel/Apple Silicon) / Linux (x86_64/arm64/armv7) / Android (Termux/chroot)
+
+# 确保解析当前脚本所在目录
+DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+[ -z "$DIR" ] && DIR="."
+cd "$DIR"
+
+echo "================================================================"
+echo "   🌱 息壤 (XiRang) 正在就地接管并自愈配置..."
+echo "================================================================"
+
+UNAME_S="$(uname -s 2>/dev/null || echo "Unknown")"
+UNAME_M="$(uname -m 2>/dev/null || echo "Unknown")"
+
+TARGET_BIN=""
+
+case "$UNAME_S" in
+    Darwin)
+        if [ "$UNAME_M" = "arm64" ]; then
+            [ -f "./xirang_mac_arm64" ] && TARGET_BIN="./xirang_mac_arm64"
+            [ -z "$TARGET_BIN" ] && [ -f "./xirang_mac" ] && TARGET_BIN="./xirang_mac"
+        else
+            [ -f "./xirang_mac_intel" ] && TARGET_BIN="./xirang_mac_intel"
+            [ -z "$TARGET_BIN" ] && [ -f "./xirang_mac" ] && TARGET_BIN="./xirang_mac"
+        fi
+        if [ -n "$TARGET_BIN" ]; then
+            chmod +x "$TARGET_BIN" 2>/dev/null || true
+            xattr -d com.apple.quarantine "$TARGET_BIN" 2>/dev/null || true
+            codesign -v "$TARGET_BIN" 2>/dev/null || codesign --force --deep --sign - "$TARGET_BIN" 2>/dev/null || true
+        fi
+        ;;
+    Linux)
+        # 检测 Android (Termux 或 Root 终端环境)
+        if [ -d "/data/data/com.termux" ] || [ -n "$TERMUX_VERSION" ]; then
+            echo "[*] 检测到 Android / Termux 环境"
+        fi
+
+        case "$UNAME_M" in
+            x86_64|amd64)
+                [ -f "./xirang_linux_x64" ] && TARGET_BIN="./xirang_linux_x64"
+                [ -z "$TARGET_BIN" ] && [ -f "./xirang_linux" ] && TARGET_BIN="./xirang_linux"
+                ;;
+            aarch64|arm64)
+                [ -f "./xirang_linux_arm64" ] && TARGET_BIN="./xirang_linux_arm64"
+                [ -z "$TARGET_BIN" ] && [ -f "./xirang_linux" ] && TARGET_BIN="./xirang_linux"
+                ;;
+            armv7*|armv6*|arm)
+                [ -f "./xirang_linux_armv7" ] && TARGET_BIN="./xirang_linux_armv7"
+                [ -z "$TARGET_BIN" ] && [ -f "./xirang_linux" ] && TARGET_BIN="./xirang_linux"
+                ;;
+            *)
+                [ -f "./xirang_linux" ] && TARGET_BIN="./xirang_linux"
+                ;;
+        esac
+        [ -n "$TARGET_BIN" ] && chmod +x "$TARGET_BIN" 2>/dev/null || true
+        ;;
+    FreeBSD)
+        [ -f "./xirang_freebsd_x64" ] && TARGET_BIN="./xirang_freebsd_x64"
+        [ -n "$TARGET_BIN" ] && chmod +x "$TARGET_BIN" 2>/dev/null || true
+        ;;
+    *)
+        # 兜底探测
+        if [ -f "./xirang" ]; then
+            TARGET_BIN="./xirang"
+        elif [ -f "./xirang_linux" ]; then
+            TARGET_BIN="./xirang_linux"
+        fi
+        ;;
+esac
+
+if [ -z "$TARGET_BIN" ] || [ ! -f "$TARGET_BIN" ]; then
+    echo "[X] 错误: 未能在本目录下找到适用于架构 ($UNAME_S / $UNAME_M) 的息壤程序！"
+    exit 1
 fi
+
+echo "[*] 正在拉起适配架构核心: $TARGET_BIN ($UNAME_S / $UNAME_M)"
+exec "$TARGET_BIN" -spec "./xirang_task_spec.json" "$@"
 `
+
 	_ = os.WriteFile(filepath.Join(targetDir, "使用息壤配置.bat"), []byte(batContent), 0755)
 	_ = os.WriteFile(filepath.Join(targetDir, "run_xirang.sh"), []byte(shContent), 0755)
 
