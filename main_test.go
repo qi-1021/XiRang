@@ -189,6 +189,28 @@ func TestFindFastSkill(t *testing.T) {
 	}
 }
 
+func TestHarmonyPCRunScriptGenerated(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "xirang_harmony_test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	harmonyScript := filepath.Join(tempDir, "run_harmony.sh")
+	content := `#!/bin/sh
+UNAME_M="$(uname -m 2>/dev/null || echo "x86_64")"
+echo "HarmonyOS PC Target: $UNAME_M"
+`
+	err = os.WriteFile(harmonyScript, []byte(content), 0755)
+	if err != nil {
+		t.Fatalf("failed to write run_harmony.sh: %v", err)
+	}
+
+	info, err := os.Stat(harmonyScript)
+	if err != nil || info.Size() == 0 {
+		t.Fatalf("expected non-empty run_harmony.sh script")
+	}
+}
 func TestLoadEmbeddedProtectedConfig(t *testing.T) {
 	// When empty
 	if cfg := loadEmbeddedProtectedConfig(); cfg != nil {

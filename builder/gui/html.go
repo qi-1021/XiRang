@@ -379,6 +379,7 @@ const IndexHTML = `<!DOCTYPE html>
                         <a href="javascript:void(0)" onclick="selectPlatforms('win')" style="color: #38bdf8; text-decoration: none;">[仅Windows]</a>
                         <a href="javascript:void(0)" onclick="selectPlatforms('mac')" style="color: #38bdf8; text-decoration: none;">[仅macOS]</a>
                         <a href="javascript:void(0)" onclick="selectPlatforms('linux')" style="color: #38bdf8; text-decoration: none;">[仅Linux/Android]</a>
+                        <a href="javascript:void(0)" onclick="selectPlatforms('harmony')" style="color: #10b981; text-decoration: none;">[仅鸿蒙PC/OHOS]</a>
                     </span>
                 </label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: var(--bg-input); padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 12px;">
@@ -405,6 +406,9 @@ const IndexHTML = `<!DOCTYPE html>
                     </label>
                     <label style="margin: 0; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
                         <input type="checkbox" name="platform_choice" value="linux_armv7"> 🍓 树莓派 / 嵌入式 (ARMv7)
+                    </label>
+                    <label style="margin: 0; color: #10b981; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" name="platform_choice" value="harmony_pc" checked> 🔴 华为鸿蒙 PC / 开源鸿蒙 (HarmonyOS PC)
                     </label>
                 </div>
             </div>
@@ -582,6 +586,8 @@ const IndexHTML = `<!DOCTYPE html>
                 cb.checked = cb.value.startsWith('mac_');
             } else if (preset === 'linux') {
                 cb.checked = cb.value.startsWith('linux_');
+            } else if (preset === 'harmony') {
+                cb.checked = cb.value.startsWith('harmony');
             }
         });
     }

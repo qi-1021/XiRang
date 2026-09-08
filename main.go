@@ -183,7 +183,9 @@ func findFastSkill(errorText string) *DiscoveredSkill {
 
 // 自动将排障成功的脚本沉淀转化为经验技能 (.meta.json)
 func saveFastSkill(skillName, pattern, scriptPath, description string) error {
-	os.MkdirAll(scriptsDir, 0755)
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		return err
+	}
 	skill := DiscoveredSkill{
 		Name:        skillName,
 		Pattern:     pattern,
@@ -200,8 +202,12 @@ func saveFastSkill(skillName, pattern, scriptPath, description string) error {
 
 // 自动扫描已沉淀的本地脚本与技能 (越用越熟练)
 func loadEvolvedSkills() string {
-	os.MkdirAll(scriptsDir, 0755)
-	os.MkdirAll(skillsDir, 0755)
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		return fmt.Sprintf("【本地经验库】初始化失败: %v", err)
+	}
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		return fmt.Sprintf("【本地经验库】初始化失败: %v", err)
+	}
 	
 	files, err := os.ReadDir(scriptsDir)
 	if err != nil || len(files) == 0 {
@@ -783,23 +789,6 @@ func main() {
 		}
 	}
 
-	// 处理 -verify (0-Token DoD 极速网关校验)
-	if *verifyFlag {
-		if cfg.TaskSpec == nil || cfg.TaskSpec.VerificationCmd == "" {
-			fmt.Println("[X] 错误: 当前未加载有效的任务规约 (-spec) 或规约中未设置 VerificationCmd！")
-			os.Exit(1)
-		}
-		fmt.Printf("🔍 [0-Token DoD 校验] 正在执行硬性验收命令: %s\n", cfg.TaskSpec.VerificationCmd)
-		code, out := executeCommand(cfg.TaskSpec.VerificationCmd, 60)
-		if code == 0 {
-			fmt.Println("✅ [DoD 校验通过] 系统与服务完全达到交付标准！")
-			os.Exit(0)
-		} else {
-			fmt.Printf("❌ [DoD 校验失败] 退出码 %d，输出:\n%s\n", code, out)
-			os.Exit(1)
-		}
-	}
-
 	// 处理 -skills (经验指纹查看)
 	if *skillsFlag {
 		fmt.Println("================================================================")
@@ -835,6 +824,28 @@ func main() {
 				}
 				fmt.Printf("[*] 已加载外部配置: %s\n", targetConfigFile)
 			}
+		}
+
+	}
+
+	// 处理 -verify (0-Token DoD 极速网关校验)
+	if *verifyFlag {
+		if cfg.TaskSpec == nil || cfg.TaskSpec.VerificationCmd == "" {
+			fmt.Println("[X] 错误: 当前未加载有效的任务规约 (-spec) 或规约中未设置 VerificationCmd！")
+			os.Exit(1)
+		}
+		if ok, reason := checkSafetyFilter(cfg.TaskSpec.VerificationCmd, cfg.TaskSpec.ForbiddenCmds); !ok {
+			fmt.Printf("[X] 错误: %s\n", reason)
+			os.Exit(1)
+		}
+		fmt.Printf("🔍 [0-Token DoD 校验] 正在执行硬性验收命令: %s\n", cfg.TaskSpec.VerificationCmd)
+		code, out := executeCommand(cfg.TaskSpec.VerificationCmd, 60)
+		if code == 0 {
+			fmt.Println("✅ [DoD 校验通过] 系统与服务完全达到交付标准！")
+			os.Exit(0)
+		} else {
+			fmt.Printf("❌ [DoD 校验失败] 退出码 %d，输出:\n%s\n", code, out)
+			os.Exit(1)
 		}
 	}
 
@@ -944,7 +955,7 @@ func runAgentLoop(cfg *Config) {
 	evolvedSkillsDoc := loadEvolvedSkills()
 
 	systemPrompt := fmt.Sprintf(`你是一个具备全平台底层操作、多线并发编排、自愈与经验持续沉淀能力的工业级通用系统部署与运维智能体「息壤 (XiRang v4.0)」。
-你的使命：不论用户给你指定何种项目任务、使用何种模型框架或服务，你都必须在当前宿主操作系统上 100%%%% 自主完成配置、排错、严格验收与经验资产化。
+你的使命：不论用户给你指定何种项目任务、使用何种模型框架或服务，你都必须在当前宿主操作系统上 100%% 自主完成配置、排错、严格验收与经验资产化。
 %s
 %s
 

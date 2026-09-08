@@ -111,12 +111,23 @@ int main(int argc, char *argv[]) {
 
     int i;
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-spec") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "-spec") == 0) {
+            if (i + 1 >= argc || argv[i + 1][0] == '-') {
+                fprintf(stderr, "[X] 参数错误: -spec 必须提供规约文件路径或 JSON 内容。\n");
+                return 1;
+            }
             strncpy(spec_path, argv[++i], sizeof(spec_path) - 1);
-        } else if (strcmp(argv[i], "-verify") == 0 && i + 1 < argc) {
+            spec_path[sizeof(spec_path) - 1] = '\0';
+        } else if (strcmp(argv[i], "-verify") == 0) {
+            if (i + 1 >= argc || argv[i + 1][0] == '-') {
+                fprintf(stderr, "[X] 参数错误: -verify 必须提供要执行的验收命令。\n");
+                return 1;
+            }
             strncpy(verify_cmd, argv[++i], sizeof(verify_cmd) - 1);
+            verify_cmd[sizeof(verify_cmd) - 1] = '\0';
         } else {
             strncpy(task, argv[i], sizeof(task) - 1);
+            task[sizeof(task) - 1] = '\0';
         }
     }
 
