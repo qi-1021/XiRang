@@ -211,7 +211,6 @@ echo "HarmonyOS PC Target: $UNAME_M"
 		t.Fatalf("expected non-empty run_harmony.sh script")
 	}
 }
-
 func TestLoadEmbeddedProtectedConfig(t *testing.T) {
 	// When empty
 	if cfg := loadEmbeddedProtectedConfig(); cfg != nil {
