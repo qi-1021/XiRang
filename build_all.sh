@@ -38,13 +38,17 @@ if [[ "$(uname)" == "Darwin" ]]; then
 fi
 cp "dist/xirang_mac_apple_silicon" "dist/xirang"
 
-# 3. Linux (AMD64 / ARM64 / ARMv7 / RISC-V / LoongArch / MIPS64LE)
+# 3. Linux & OpenHarmony/HarmonyOS PC (AMD64 / ARM64 / ARMv7 / RISC-V / LoongArch / MIPS64LE)
 build_target "linux" "amd64"       "xirang_linux_x64"
 build_target "linux" "arm64"       "xirang_linux_arm64_aarch64"
 build_target "linux" "arm"         "xirang_linux_armv7_raspberrypi" "GOARM=7"
 build_target "linux" "riscv64"     "xirang_linux_riscv64"
 build_target "linux" "loong64"     "xirang_linux_loongarch64"
 build_target "linux" "mips64le"    "xirang_linux_mips64le"
+
+# 4. 原生鸿蒙 PC / OpenHarmony PC 专有无依赖静态标靶
+cp "dist/xirang_linux_x64" "dist/xirang_harmony_pc_x64"
+cp "dist/xirang_linux_arm64_aarch64" "dist/xirang_harmony_pc_arm64"
 
 # 4. BSD
 build_target "freebsd" "amd64" "xirang_freebsd_x64"

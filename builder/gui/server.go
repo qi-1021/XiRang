@@ -485,6 +485,10 @@ func (s *ForgeServer) handleIncept(w http.ResponseWriter, r *http.Request) {
 	if hasPlatform("linux_armv7") {
 		_ = copyFile(filepath.Join(distDir, "xirang_linux_armv7_raspberrypi"), filepath.Join(targetDir, "xirang_linux_armv7"))
 	}
+	if hasPlatform("harmony_pc") {
+		_ = copyFile(filepath.Join(distDir, "xirang_harmony_pc_x64"), filepath.Join(targetDir, "xirang_harmony_pc_x64"))
+		_ = copyFile(filepath.Join(distDir, "xirang_harmony_pc_arm64"), filepath.Join(targetDir, "xirang_harmony_pc_arm64"))
+	}
 
 	// 4. 生成超强全兼容 Windows 批处理（兼容 Win 7 / Win 10 / Win 11 / 32位老机器 / 64位 / ARM64）
 	batContent := `@echo off
@@ -615,8 +619,46 @@ echo "[*] 正在拉起适配架构核心: $TARGET_BIN ($UNAME_S / $UNAME_M)"
 exec "$TARGET_BIN" -spec "./xirang_task_spec.json" "$@"
 `
 
+	// 6. 生成华为鸿蒙 PC / 开源鸿蒙 PC (OpenHarmony PC) 专属无依赖脚本 (兼容 musl libc / mksh / toybox / hdc)
+	harmonyShContent := `#!/bin/sh
+# 华为鸿蒙 PC (HarmonyOS PC) 与开源鸿蒙 PC (OpenHarmony PC) 专有自愈启动脚本
+# 适配特点: 静态链接 (musl libc 兼容) / mksh 语法兼容 / toybox 原生支持 / hdc 通道预留
+
+DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+[ -z "$DIR" ] && DIR="."
+cd "$DIR"
+
+echo "================================================================"
+echo "   🔴 华为鸿蒙 PC / 开源鸿蒙 (HarmonyOS PC) 息壤自愈接管引擎"
+echo "================================================================"
+
+UNAME_M="$(uname -m 2>/dev/null || echo "x86_64")"
+TARGET_BIN=""
+
+case "$UNAME_M" in
+    aarch64|arm64)
+        [ -f "./xirang_harmony_pc_arm64" ] && TARGET_BIN="./xirang_harmony_pc_arm64"
+        [ -z "$TARGET_BIN" ] && [ -f "./xirang_linux_arm64" ] && TARGET_BIN="./xirang_linux_arm64"
+        ;;
+    *)
+        [ -f "./xirang_harmony_pc_x64" ] && TARGET_BIN="./xirang_harmony_pc_x64"
+        [ -z "$TARGET_BIN" ] && [ -f "./xirang_linux_x64" ] && TARGET_BIN="./xirang_linux_x64"
+        ;;
+esac
+
+if [ -z "$TARGET_BIN" ] || [ ! -f "$TARGET_BIN" ]; then
+    echo "[X] 错误: 未能在鸿蒙 PC 上找到适配 ($UNAME_M) 的静态编译无依赖息壤内核！"
+    exit 1
+fi
+
+chmod +x "$TARGET_BIN" 2>/dev/null || true
+echo "[*] 正在启动鸿蒙 PC 适配核心: $TARGET_BIN ($UNAME_M)"
+exec "$TARGET_BIN" -spec "./xirang_task_spec.json" "$@"
+`
+
 	_ = os.WriteFile(filepath.Join(targetDir, "使用息壤配置.bat"), []byte(batContent), 0755)
 	_ = os.WriteFile(filepath.Join(targetDir, "run_xirang.sh"), []byte(shContent), 0755)
+	_ = os.WriteFile(filepath.Join(targetDir, "run_harmony.sh"), []byte(harmonyShContent), 0755)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"ok","message":"已成功在目标文件夹就地植入息壤副本、定制规约与启动脚本！"}`))
