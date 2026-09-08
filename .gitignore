@@ -1,6 +1,8 @@
 # Binaries and compiled targets
 dist/
 dist_protected/
+builder/xirang_builder
+builder/zen_builder
 *.exe
 *.dll
 *.so

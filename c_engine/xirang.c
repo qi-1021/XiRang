@@ -106,14 +106,41 @@ void extract_json_field(const char *json, const char *field, char *out, size_t m
 
 int main(int argc, char *argv[]) {
     char task[512] = "检查当前系统环境并完成自愈配置。";
-    if (argc > 1) {
-        strncpy(task, argv[1], sizeof(task) - 1);
+    char spec_path[256] = "";
+    char verify_cmd[512] = "";
+
+    int i;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-spec") == 0 && i + 1 < argc) {
+            strncpy(spec_path, argv[++i], sizeof(spec_path) - 1);
+        } else if (strcmp(argv[i], "-verify") == 0 && i + 1 < argc) {
+            strncpy(verify_cmd, argv[++i], sizeof(verify_cmd) - 1);
+        } else {
+            strncpy(task, argv[i], sizeof(task) - 1);
+        }
+    }
+
+    /* 若传入 -verify，直接执行终态 0-Token 验收并退出 */
+    if (strlen(verify_cmd) > 0) {
+        printf("🔍 [C Engine DoD 网关] 正在执行硬性验收测试: %s\n", verify_cmd);
+        char verify_out[2048];
+        int code = run_command(verify_cmd, verify_out, sizeof(verify_out));
+        if (code == 0) {
+            printf("✅ [DoD 校验通过] 系统与服务完全达到交付标准！\n");
+            return 0;
+        } else {
+            printf("❌ [DoD 校验失败] 退出码 %d，输出:\n%s\n", code, verify_out);
+            return 1;
+        }
     }
 
     printf("================================================================\n");
-    printf("    ⚡ ZEN-AGENT (C 原生纯净引擎 v3.0) - 零外部依赖\n");
-    printf("    (原生兼容 Win11 24H2+, 零 wmic 依赖, 任意 C 编译器秒级运行)\n");
+    printf("    🌱 息壤 (XiRang) C 原生嵌入式自愈引擎 v4.0 - 零外部依赖\n");
+    printf("    (原生兼容 Win11 24H2+, 零 wmic 依赖, 任意 C 编译器 0.2s 极速编译)\n");
     printf("================================================================\n");
+    if (strlen(spec_path) > 0) {
+        printf("[*] 绑定规约文件: %s\n", spec_path);
+    }
     printf("[*] 核心目标: %s\n\n", task);
 
     char history[4096] = "系统初始化完成。";
