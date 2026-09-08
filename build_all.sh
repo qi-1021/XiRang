@@ -50,10 +50,10 @@ build_target "linux" "mips64le"    "xirang_linux_mips64le"
 cp "dist/xirang_linux_x64" "dist/xirang_harmony_pc_x64"
 cp "dist/xirang_linux_arm64_aarch64" "dist/xirang_harmony_pc_arm64"
 
-# 4. BSD
+# 5. BSD
 build_target "freebsd" "amd64" "xirang_freebsd_x64"
 
-# 5. Builder 工具
+# 6. Builder 工具
 cd builder && go build -o xirang_builder main.go && cp xirang_builder zen_builder && cd ..
 
 echo "================================================================"
