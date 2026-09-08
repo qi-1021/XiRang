@@ -181,6 +181,23 @@ func findFastSkill(errorText string) *DiscoveredSkill {
 	return nil
 }
 
+// 自动将排障成功的脚本沉淀转化为经验技能 (.meta.json)
+func saveFastSkill(skillName, pattern, scriptPath, description string) error {
+	os.MkdirAll(scriptsDir, 0755)
+	skill := DiscoveredSkill{
+		Name:        skillName,
+		Pattern:     pattern,
+		ScriptPath:  scriptPath,
+		Description: description,
+	}
+	data, err := json.MarshalIndent(skill, "", "  ")
+	if err != nil {
+		return err
+	}
+	metaPath := filepath.Join(scriptsDir, filepath.Base(scriptPath)+".meta.json")
+	return os.WriteFile(metaPath, data, 0644)
+}
+
 // 自动扫描已沉淀的本地脚本与技能 (越用越熟练)
 func loadEvolvedSkills() string {
 	os.MkdirAll(scriptsDir, 0755)
@@ -704,6 +721,8 @@ func main() {
 	watchdogFlag := flag.Bool("watchdog", false, "启动常驻售后巡检守护模式 (服务挂掉自动自愈)")
 	intervalFlag := flag.Int("interval", 30, "售后巡检间隔秒数 (默认 30 秒)")
 	doctorFlag := flag.Bool("doctor", false, "启动售后急诊医生交互模式 (有报错/有问题随时找它)")
+	verifyFlag := flag.Bool("verify", false, "直接对当前规约执行终态硬性验收测试 (0-Token DoD 极速网关)")
+	skillsFlag := flag.Bool("skills", false, "查看并管理本地已沉淀的经验脚本与故障指纹库 (.xirang/scripts/)")
 	forgeFlag := flag.Bool("forge", false, "启动息壤工坊图形创作控制台 (XiRang Studio GUI)")
 	guiAliasFlag := flag.Bool("gui", false, "启动息壤工坊图形创作控制台 (同 -forge)")
 	flag.Parse()
@@ -762,6 +781,32 @@ func main() {
 				cfg.Goal = spec.Goal
 			}
 		}
+	}
+
+	// 处理 -verify (0-Token DoD 极速网关校验)
+	if *verifyFlag {
+		if cfg.TaskSpec == nil || cfg.TaskSpec.VerificationCmd == "" {
+			fmt.Println("[X] 错误: 当前未加载有效的任务规约 (-spec) 或规约中未设置 VerificationCmd！")
+			os.Exit(1)
+		}
+		fmt.Printf("🔍 [0-Token DoD 校验] 正在执行硬性验收命令: %s\n", cfg.TaskSpec.VerificationCmd)
+		code, out := executeCommand(cfg.TaskSpec.VerificationCmd, 60)
+		if code == 0 {
+			fmt.Println("✅ [DoD 校验通过] 系统与服务完全达到交付标准！")
+			os.Exit(0)
+		} else {
+			fmt.Printf("❌ [DoD 校验失败] 退出码 %d，输出:\n%s\n", code, out)
+			os.Exit(1)
+		}
+	}
+
+	// 处理 -skills (经验指纹查看)
+	if *skillsFlag {
+		fmt.Println("================================================================")
+		fmt.Println("📜 息壤 (XiRang) 本地经验与故障指纹资产库 (.xirang/scripts/)")
+		fmt.Println("================================================================")
+		fmt.Println(loadEvolvedSkills())
+		return
 	}
 
 	// 3. 外部 JSON 配置文件 (优先 xirang_config.json，自动兼容 zen_config.json)

@@ -121,6 +121,35 @@ func TestSmartPruneLog(t *testing.T) {
 	}
 }
 
+func TestSaveAndFindFastSkill(t *testing.T) {
+	origScriptsDir := scriptsDir
+	defer func() { scriptsDir = origScriptsDir }()
+
+	tempDir, err := os.MkdirTemp("", "xirang_test_scripts_save")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	scriptsDir = tempDir
+
+	scriptPath := filepath.Join(tempDir, "fix_cuda.sh")
+	_ = os.WriteFile(scriptPath, []byte("#!/bin/sh\necho cuda fixed"), 0755)
+
+	err = saveFastSkill("FixCUDA", "cuda out of memory", scriptPath, "CUDA OOM auto cleanup")
+	if err != nil {
+		t.Fatalf("saveFastSkill failed: %v", err)
+	}
+
+	found := findFastSkill("Error: CUDA out of memory on device 0")
+	if found == nil {
+		t.Fatalf("expected to find fast skill after saveFastSkill, got nil")
+	}
+	if found.Name != "FixCUDA" || found.Description != "CUDA OOM auto cleanup" {
+		t.Errorf("unexpected skill content: %+v", found)
+	}
+}
+
 func TestFindFastSkill(t *testing.T) {
 	// Create temporary scriptsDir
 	origScriptsDir := scriptsDir
