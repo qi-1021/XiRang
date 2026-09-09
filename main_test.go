@@ -248,3 +248,94 @@ func TestLoadEmbeddedProtectedConfig(t *testing.T) {
 		t.Errorf("loaded config mismatched: %+v", loaded)
 	}
 }
+
+func TestCheckPathGuard_PathTraversal(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+
+	subDir := filepath.Join(cwd, "allowed_workspace")
+
+	// Path traversal attempt using ..
+	traversalTarget := filepath.Join(subDir, "..", "..", "system32")
+
+	ok, msg := checkPathGuard(traversalTarget, []string{subDir})
+	if ok {
+		t.Errorf("checkPathGuard should have blocked path traversal target %q, but passed; msg: %s", traversalTarget, msg)
+	}
+}
+
+func TestRollbackTrackCreatedFile(t *testing.T) {
+	origRollbackStack := rollbackStack
+	origBackupDir := backupDir
+	defer func() {
+		rollbackStack = origRollbackStack
+		backupDir = origBackupDir
+	}()
+
+	tempDir, err := os.MkdirTemp("", "xirang_test_rollback")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	backupDir = filepath.Join(tempDir, "backups")
+	rollbackStack = nil
+
+	// File does not exist initially
+	newFilePath := filepath.Join(tempDir, "newly_created.txt")
+	trackFileBackup(newFilePath)
+
+	// Create file
+	err = os.WriteFile(newFilePath, []byte("hello world"), 0644)
+	if err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+
+	// Verify file exists before rollback
+	if _, err := os.Stat(newFilePath); os.IsNotExist(err) {
+		t.Fatalf("file should exist before rollback")
+	}
+
+	// Execute rollback
+	executeRollback()
+
+	// Verify newly created file was deleted
+	if _, err := os.Stat(newFilePath); !os.IsNotExist(err) {
+		t.Errorf("newly created file should have been deleted during rollback")
+	}
+}
+
+func TestFuzzyFindFastSkill(t *testing.T) {
+	origScriptsDir := scriptsDir
+	defer func() { scriptsDir = origScriptsDir }()
+
+	tempDir, err := os.MkdirTemp("", "xirang_test_fuzzy_scripts")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	scriptsDir = tempDir
+
+	// Write multi-keyword skill
+	skill := DiscoveredSkill{
+		Name:        "FixPortAndService",
+		Pattern:     "port 8080 | address already in use",
+		ScriptPath:  filepath.Join(tempDir, "fix_port.sh"),
+		Description: "Multi keyword skill",
+	}
+	skillBytes, _ := json.Marshal(skill)
+
+	_ = os.WriteFile(filepath.Join(tempDir, "fix_port.sh"), []byte("#!/bin/sh\necho fixed"), 0755)
+	_ = os.WriteFile(filepath.Join(tempDir, "fix_port.sh.meta.json"), skillBytes, 0644)
+
+	found := findFastSkill("Error starting server: address already in use on port 8080")
+	if found == nil {
+		t.Fatalf("expected to find skill with multi-keyword matching")
+	}
+	if found.Name != "FixPortAndService" {
+		t.Errorf("expected skill name FixPortAndService, got %q", found.Name)
+	}
+}

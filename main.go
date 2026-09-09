@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"bufio"
 	"bytes"
 	"crypto/tls"
@@ -165,20 +166,60 @@ func findFastSkill(errorText string) *DiscoveredSkill {
 		return nil
 	}
 	lower := strings.ToLower(errorText)
+
+	var bestSkill *DiscoveredSkill
+	bestScore := 0
+
 	for _, f := range files {
 		if strings.HasSuffix(f.Name(), ".meta.json") {
 			data, err := os.ReadFile(filepath.Join(scriptsDir, f.Name()))
-			if err == nil {
-				var skill DiscoveredSkill
-				if json.Unmarshal(data, &skill) == nil {
-					if skill.Pattern != "" && strings.Contains(lower, strings.ToLower(skill.Pattern)) {
-						return &skill
+			if err != nil {
+				continue
+			}
+			var skill DiscoveredSkill
+			if json.Unmarshal(data, &skill) != nil || skill.Pattern == "" {
+				continue
+			}
+
+			score := 0
+			patternLower := strings.ToLower(skill.Pattern)
+
+			// 1. 正则指纹匹配
+			if re, err := regexp.Compile("(?i)" + skill.Pattern); err == nil {
+				if re.MatchString(errorText) {
+					score += 100 + len(skill.Pattern)
+				}
+			}
+
+			// 2. 包含关键字/短语匹配 (支持逗号、竖线或分号分割的多关键字)
+			if strings.Contains(lower, patternLower) {
+				score += 50 + len(patternLower)
+			} else {
+				parts := strings.FieldsFunc(patternLower, func(r rune) bool {
+					return r == ',' || r == '|' || r == ';'
+				})
+				hitCount := 0
+				for _, part := range parts {
+					p := strings.TrimSpace(part)
+					if p != "" && strings.Contains(lower, p) {
+						hitCount++
+						score += 10 + len(p)
 					}
 				}
+				if hitCount > 0 && hitCount == len(parts) {
+					score += 30
+				}
+			}
+
+			if score > bestScore {
+				bestScore = score
+				skillCopy := skill
+				bestSkill = &skillCopy
 			}
 		}
 	}
-	return nil
+
+	return bestSkill
 }
 
 // 自动将排障成功的脚本沉淀转化为经验技能 (.meta.json)
@@ -234,26 +275,33 @@ func loadEvolvedSkills() string {
 
 // 记录文件备份事务
 func trackFileBackup(filePath string) {
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	cleanPath := filepath.Clean(filePath)
+	for _, op := range rollbackStack {
+		if filepath.Clean(op.Target) == cleanPath {
+			return // 已记录过初始状态，无需重复记录
+		}
+	}
+
+	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
 		// 原本不存在，回滚操作为删除新产生的文件
 		rollbackStack = append(rollbackStack, RollbackOp{
 			Action: "delete_file",
-			Target: filePath,
+			Target: cleanPath,
 		})
 		return
 	}
 
 	// 已存在，先备份原内容
 	os.MkdirAll(backupDir, 0755)
-	backupName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(filePath))
+	backupName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(cleanPath))
 	backupPath := filepath.Join(backupDir, backupName)
 	
-	in, err := os.ReadFile(filePath)
+	in, err := os.ReadFile(cleanPath)
 	if err == nil {
 		os.WriteFile(backupPath, in, 0644)
 		rollbackStack = append(rollbackStack, RollbackOp{
 			Action:     "restore_file",
-			Target:     filePath,
+			Target:     cleanPath,
 			BackupPath: backupPath,
 		})
 	}
@@ -382,11 +430,17 @@ func checkPathGuard(targetPath string, allowedPaths []string) (bool, string) {
 	if err != nil {
 		return false, fmt.Sprintf("路径解析错误: %v", err)
 	}
+	absTarget = filepath.Clean(absTarget)
 
 	for _, allowed := range allowedPaths {
-		absAllowed, _ := filepath.Abs(allowed)
+		absAllowed, err := filepath.Abs(allowed)
+		if err != nil {
+			continue
+		}
+		absAllowed = filepath.Clean(absAllowed)
+
 		rel, err := filepath.Rel(absAllowed, absTarget)
-		if err == nil && !strings.HasPrefix(rel, "..") {
+		if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
 			return true, ""
 		}
 	}

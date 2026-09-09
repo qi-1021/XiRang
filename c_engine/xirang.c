@@ -3,7 +3,8 @@
  *  息壤 (XiRang) v4.0 C89/C99 纯原生单文件实现:
  *  - 适用平台: 任何装有 gcc / clang / msvc / tcc / zig 的机器 (含 Win11 24H2)
  *  - 绝不依赖已被 Windows 废弃的 wmic
- *  - 增强型 JSON 解析: 完美兼容 content 为 null 但 reasoning_content 有数据的推理大模型
+ *  - 增强型 JSON 解析与安全拦截网关 (Path & Command Guard)
+ *  - 0-Token Fast-Path 本地故障指纹提速
  *  - 编译指令: 
  *      Linux/Mac:   gcc -O2 xirang.c -o xirang
  *      Windows:     cl /O2 xirang.c   或   gcc xirang.c -o xirang.exe
@@ -24,10 +25,43 @@
 #define DEFAULT_API_URL "https://api.openai.com/v1/chat/completions"
 #define DEFAULT_MODEL "gpt-4o"
 
+/* 1. 安全过滤器：拦截破坏性高危指令 */
+int check_c_safety(const char *cmd) {
+    if (!cmd) return 1;
+    if (strstr(cmd, "rm -rf /") || strstr(cmd, "format ") || strstr(cmd, "mkfs") ||
+        strstr(cmd, "dd if=") || strstr(cmd, "del /f /s /q c:\\")) {
+        printf("⚠️ [C Engine 安全过滤] 拦截到破坏性危险指令，已停止执行: %s\n", cmd);
+        return 0;
+    }
+    return 1;
+}
+
+/* 2. 本地 Fast-Path 0.2秒秒级指纹识别 (0 Token 快速诊断建议) */
+int find_c_fast_skill(const char *error_text) {
+    if (!error_text) return 0;
+    if (strstr(error_text, "address already in use") || strstr(error_text, "Address in use")) {
+        printf("⚡ [C Engine Fast-Path 0.2s 命中指纹]: 检测到端口占用错误 (address already in use)。建议查找并释放 PID 端口。\n");
+        return 1;
+    }
+    if (strstr(error_text, "out of memory") || strstr(error_text, "CUDA out of memory")) {
+        printf("⚡ [C Engine Fast-Path 0.2s 命中指纹]: 检测到显存/内存溢出 (out of memory)。建议清理后台无用模型进程。\n");
+        return 1;
+    }
+    return 0;
+}
+
 /* 执行系统终端命令并获取输出 (纯标准 popen / _popen，零 wmic 依赖) */
 int run_command(const char *cmd, char *out_buf, size_t max_len) {
+    if (!check_c_safety(cmd)) {
+        if (out_buf && max_len > 0) {
+            snprintf(out_buf, max_len, "Command blocked by safety guard.");
+        }
+        return -1;
+    }
+
     FILE *fp;
-    out_buf[0] = '\0';
+    if (out_buf && max_len > 0) out_buf[0] = '\0';
+
 #ifdef _WIN32
     fp = _popen(cmd, "r");
 #else
@@ -206,7 +240,9 @@ int main(int argc, char *argv[]) {
             int ret = run_command(cmd, out, sizeof(out));
             printf("   -> 退出码: %d\n", ret);
 
-            char step_log[2560];
+            find_c_fast_skill(out);
+
+            char step_log[4096];
             snprintf(step_log, sizeof(step_log), "\\n[Step %d CMD]: %s\\n[CODE]: %d\\n[OUT]: %.500s", step, cmd, ret, out);
             strncat(history, step_log, sizeof(history) - strlen(history) - 1);
         } else {
