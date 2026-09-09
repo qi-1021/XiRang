@@ -776,10 +776,14 @@ func main() {
 	// 2. 外部 spec 参数解析
 	if *specFlag != "" {
 		var spec TaskSpecification
-		if data, err := os.ReadFile(*specFlag); err == nil {
-			json.Unmarshal(data, &spec)
+		var err error
+		if data, readErr := os.ReadFile(*specFlag); readErr == nil {
+			err = json.Unmarshal(data, &spec)
 		} else {
-			json.Unmarshal([]byte(*specFlag), &spec)
+			err = json.Unmarshal([]byte(*specFlag), &spec)
+		}
+		if err != nil {
+			fmt.Printf("[⚠️ 警告] 解析任务规约失败: %v\n", err)
 		}
 		if spec.Goal != "" {
 			cfg.TaskSpec = &spec
