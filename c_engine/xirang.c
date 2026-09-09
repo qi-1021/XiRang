@@ -21,9 +21,8 @@
   #include <unistd.h>
 #endif
 
-#define API_URL "https://api.openai.com/v1/chat/completions"
-#define API_KEY "your-api-key-here"
-#define MODEL "gpt-4o"
+#define DEFAULT_API_URL "https://api.openai.com/v1/chat/completions"
+#define DEFAULT_MODEL "gpt-4o"
 
 /* 执行系统终端命令并获取输出 (纯标准 popen / _popen，零 wmic 依赖) */
 int run_command(const char *cmd, char *out_buf, size_t max_len) {
@@ -49,6 +48,27 @@ int run_command(const char *cmd, char *out_buf, size_t max_len) {
 /* 使用宿主系统原生网络工具发起大模型请求 (兼容 curl / PowerShell) */
 int call_mimo(const char *prompt, char *resp_buf, size_t max_len) {
     char cmd[8192];
+    const char *api_key = getenv("OPENAI_API_KEY");
+    if (!api_key || strlen(api_key) == 0) {
+        api_key = getenv("API_KEY");
+    }
+    if (!api_key || strlen(api_key) == 0) {
+        fprintf(stderr, "[X] 错误: 未配置 API 密钥 (请设置 OPENAI_API_KEY 环境变量)\n");
+        return -1;
+    }
+
+    const char *api_url = getenv("OPENAI_API_URL");
+    if (!api_url || strlen(api_url) == 0) {
+        api_url = getenv("OPENAI_BASE_URL");
+    }
+    if (!api_url || strlen(api_url) == 0) {
+        api_url = DEFAULT_API_URL;
+    }
+
+    const char *model = getenv("OPENAI_MODEL");
+    if (!model || strlen(model) == 0) {
+        model = DEFAULT_MODEL;
+    }
 
     FILE *req_fp = fopen("zen_req.tmp", "w");
     if (!req_fp) return -1;
@@ -56,7 +76,7 @@ int call_mimo(const char *prompt, char *resp_buf, size_t max_len) {
     fprintf(req_fp, "{\"model\":\"%s\",\"messages\":["
                     "{\"role\":\"system\",\"content\":\"你是 ZenAgent 纯 C 原生自愈智能体。你必须只输出纯 JSON: {\\\"action\\\":\\\"run_command\\\"|\\\"finish\\\",\\\"command\\\":\\\"...\\\",\\\"thought\\\":\\\"...\\\",\\\"explanation\\\":\\\"...\\\"}\"},"
                     "{\"role\":\"user\",\"content\":\"%s\"}],\"max_tokens\":1500,\"temperature\":0.1}",
-                    MODEL, prompt);
+                    model, prompt);
     fclose(req_fp);
 
 #ifdef _WIN32
@@ -64,11 +84,11 @@ int call_mimo(const char *prompt, char *resp_buf, size_t max_len) {
     snprintf(cmd, sizeof(cmd),
              "curl.exe -s -k -X POST \"%s\" -H \"Authorization: Bearer %s\" -H \"Content-Type: application/json\" -H \"User-Agent: opencode/1.0.0\" -d @zen_req.tmp 2>nul || "
              "powershell -NoProfile -Command \"$b = Get-Content zen_req.tmp -Raw; Invoke-RestMethod -Uri '%s' -Method Post -Headers @{'Authorization'='Bearer %s';'User-Agent'='opencode/1.0.0'} -ContentType 'application/json' -Body $b | ConvertTo-Json -Compress\"",
-             API_URL, API_KEY, API_URL, API_KEY);
+             api_url, api_key, api_url, api_key);
 #else
     snprintf(cmd, sizeof(cmd),
              "curl -s -k -X POST \"%s\" -H \"Authorization: Bearer %s\" -H \"Content-Type: application/json\" -H \"User-Agent: opencode/1.0.0\" -d @zen_req.tmp 2>/dev/null",
-             API_URL, API_KEY);
+             api_url, api_key);
 #endif
 
     run_command(cmd, resp_buf, max_len);
