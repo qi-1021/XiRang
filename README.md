@@ -73,8 +73,18 @@ xirang -forge  # 或 xirang -gui
 
 > [!IMPORTANT]
 > **安全设计准则**：息壤**绝不在宿主操作系统的全局环境变量中盲目嗅探 API 密钥**，防止密钥盗用。模型通道由以下方式提供：
-> 1. **出厂加密熔炼（首选交付态）**：使用 `builder` 将模型通道、私有 API Key 与项目规约通过 **AES-256-GCM** 加密熔炼进单一二进制中，分发绝对安全。
+> 1. **出厂混淆熔炼（交付态，注意边界）**：使用 `builder` 将模型通道与规约 AES-256-GCM 加密后嵌入二进制。**内嵌 `BuildSecret` 仅是混淆，不是分发级密钥保护**；更强方案请用 `builder -external-secret`，运行时注入 `XIRANG_BUILD_SECRET`。
 > 2. **显式配置文件注入**：在执行目录下放置受控的 `xirang_config.json` 文件。
+
+**安全环境变量（默认更严）：**
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| TLS 校验 | 开启 | 仅当 `XIRANG_INSECURE_TLS=1` 才跳过证书校验 |
+| 写路径沙箱 | cwd + `.xirang` | 未配置 `allowed_paths` 时默认拒绝白名单外写入；`XIRANG_UNRESTRICTED_PATHS=1` 可放开（不推荐） |
+| `XIRANG_BUILD_SECRET` | 空 | 与 `-external-secret` 配合，运行时解密嵌入配置 |
+
+**事务回滚**：变更会写入 `.xirang/backups/index.json`，跨进程 `xirang --rollback` 可读取索引撤销（含新建文件/目录）。
 
 ---
 

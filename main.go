@@ -1,7 +1,6 @@
 package main
 
 import (
-	"regexp"
 	"bufio"
 	"bytes"
 	"crypto/tls"
@@ -13,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -40,7 +40,7 @@ type Milestone struct {
 
 // 售后健康巡检探针 (Health Check & Watchdog)
 type HealthProbe struct {
-	Name     string `json:"name"`     // 服务/组件名称
+	Name     string `json:"name"`      // 服务/组件名称
 	CheckCmd string `json:"check_cmd"` // 快速健康检查命令 (退出码 0 为正常)
 	FixGoal  string `json:"fix_goal"`  // 一旦异常时触发的自愈排错目标
 }
@@ -63,12 +63,12 @@ type RollbackOp struct {
 
 // 工业级结构化任务规约 (Task Specification v3.0)
 type TaskSpecification struct {
-	TaskName        string       `json:"task_name"`
-	Goal            string       `json:"goal"`
-	AllowedPaths    []string     `json:"allowed_paths"`    // 写入路径白名单 (安全沙箱)
-	ForbiddenCmds   []string     `json:"forbidden_cmds"`   // 危险指令黑名单
-	Milestones      []Milestone  `json:"milestones"`       // 分步里程碑
-	VerificationCmd string       `json:"verification_cmd"` // 终态防作弊验收命令 (DoD)
+	TaskName        string        `json:"task_name"`
+	Goal            string        `json:"goal"`
+	AllowedPaths    []string      `json:"allowed_paths"`    // 写入路径白名单 (安全沙箱)
+	ForbiddenCmds   []string      `json:"forbidden_cmds"`   // 危险指令黑名单
+	Milestones      []Milestone   `json:"milestones"`       // 分步里程碑
+	VerificationCmd string        `json:"verification_cmd"` // 终态防作弊验收命令 (DoD)
 	StrictRules     []string      `json:"strict_rules"`     // 强制规则
 	CustomTools     []CustomTool  `json:"custom_tools"`     // 打包预置的专属领域扩展工具箱
 	HealthProbes    []HealthProbe `json:"health_probes"`    // 售后巡检探针
@@ -94,53 +94,98 @@ type Config struct {
 
 // 单个原子动作 (用于单步或并发 batch_actions)
 type SubAction struct {
-	ID          string   `json:"id,omitempty"`
-	Action      string   `json:"action"` // "run_command", "write_file", "read_file", "list_dir", "http_download", "call_tool"
-	Command     string   `json:"command,omitempty"`
-	Path        string   `json:"path,omitempty"`
-	Content     string   `json:"content,omitempty"`
-	URL         string   `json:"url,omitempty"`
-	ToolName    string   `json:"tool_name,omitempty"`
-	ToolArgs    string   `json:"tool_args,omitempty"`
-	Explanation string   `json:"explanation,omitempty"`
+	ID          string `json:"id,omitempty"`
+	Action      string `json:"action"` // "run_command", "write_file", "read_file", "list_dir", "http_download", "call_tool"
+	Command     string `json:"command,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Content     string `json:"content,omitempty"`
+	URL         string `json:"url,omitempty"`
+	ToolName    string `json:"tool_name,omitempty"`
+	ToolArgs    string `json:"tool_args,omitempty"`
+	Explanation string `json:"explanation,omitempty"`
 }
 
 // 决策结构体 (支持单步、并发批处理 batch_actions、黑板更新、事务与人机交互)
 type Decision struct {
-	Action        string      `json:"action"` // "run_command", "write_file", "read_file", "list_dir", "http_download", "batch_actions", "call_tool", "ask_human", "report_milestone", "finish"
-	Thought       string      `json:"thought"`
-	Explanation   string      `json:"explanation"`
-	
+	Action      string `json:"action"` // "run_command", "write_file", "read_file", "list_dir", "http_download", "batch_actions", "call_tool", "ask_human", "report_milestone", "finish"
+	Thought     string `json:"thought"`
+	Explanation string `json:"explanation"`
+
 	// 单步动作参数
-	Command       string      `json:"command,omitempty"`
-	Path          string      `json:"path,omitempty"`
-	Content       string      `json:"content,omitempty"`
-	URL           string      `json:"url,omitempty"`
-	ToolName      string      `json:"tool_name,omitempty"`
-	ToolArgs      string      `json:"tool_args,omitempty"`
-	
+	Command  string `json:"command,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Content  string `json:"content,omitempty"`
+	URL      string `json:"url,omitempty"`
+	ToolName string `json:"tool_name,omitempty"`
+	ToolArgs string `json:"tool_args,omitempty"`
+
 	// 并发多线操作队列 (支持完全并行的任务批处理)
-	BatchActions  []SubAction `json:"batch_actions,omitempty"`
+	BatchActions []SubAction `json:"batch_actions,omitempty"`
 
 	// 状态便签与反思黑板 (Working Memory & Scratchpad)
-	Scratchpad    string      `json:"scratchpad,omitempty"` // 当前掌握的事实、排障假设与下一步计划
+	Scratchpad string `json:"scratchpad,omitempty"` // 当前掌握的事实、排障假设与下一步计划
 
 	// 交互决策
-	Question      string      `json:"question,omitempty"`
-	Options       []string    `json:"options,omitempty"`
-	Milestone     string      `json:"milestone,omitempty"`
+	Question  string   `json:"question,omitempty"`
+	Options   []string `json:"options,omitempty"`
+	Milestone string   `json:"milestone,omitempty"`
 }
 
 var defaultProviders = []Provider{}
 
 // 统一工作空间隔离与持久化知识经验库 (.xirang/)
 var (
+	rollbackMu    sync.Mutex
 	rollbackStack []RollbackOp
 	xirangHomeDir = ".xirang"
 	backupDir     = filepath.Join(xirangHomeDir, "backups")
 	scriptsDir    = filepath.Join(xirangHomeDir, "scripts")
 	skillsDir     = filepath.Join(xirangHomeDir, "skills")
+	// sessionScripts: 本轮写入经验库的脚本，成功结束时自动沉淀指纹
+	sessionScripts []string
+	sessionMu      sync.Mutex
 )
+
+func rollbackIndexPath() string {
+	return filepath.Join(backupDir, "index.json")
+}
+
+func persistRollbackLocked() {
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return
+	}
+	data, err := json.MarshalIndent(rollbackStack, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(rollbackIndexPath(), data, 0644)
+}
+
+// loadRollbackStack 从磁盘恢复事务栈，使跨进程 --rollback 可用
+func loadRollbackStack() {
+	rollbackMu.Lock()
+	defer rollbackMu.Unlock()
+	if len(rollbackStack) > 0 {
+		return
+	}
+	data, err := os.ReadFile(rollbackIndexPath())
+	if err != nil {
+		return
+	}
+	var ops []RollbackOp
+	if err := json.Unmarshal(data, &ops); err == nil {
+		rollbackStack = ops
+	}
+}
+
+func allowInsecureTLS() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("XIRANG_INSECURE_TLS")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+func newTLSConfig() *tls.Config {
+	return &tls.Config{InsecureSkipVerify: allowInsecureTLS()}
+}
 
 func init() {
 	// 自动平滑升级历史 .zen 目录，若存在则无缝迁移至 .xirang
@@ -241,6 +286,102 @@ func saveFastSkill(skillName, pattern, scriptPath, description string) error {
 	return os.WriteFile(metaPath, data, 0644)
 }
 
+// deriveSkillPattern 从脚本内容/文件名提炼故障指纹关键字
+func deriveSkillPattern(content, filename string) string {
+	candidates := []string{
+		"address already in use",
+		"port already in use",
+		"cuda out of memory",
+		"out of memory",
+		"permission denied",
+		"command not found",
+		"connection refused",
+		"no such file or directory",
+		"failed to bind",
+	}
+	lower := strings.ToLower(content)
+	var hits []string
+	for _, c := range candidates {
+		if strings.Contains(lower, c) && !containsFold(hits, c) {
+			hits = append(hits, c)
+		}
+	}
+	if len(hits) > 0 {
+		if len(hits) > 3 {
+			hits = hits[:3]
+		}
+		return strings.Join(hits, " | ")
+	}
+	stem := strings.TrimSuffix(filename, filepath.Ext(filename))
+	stem = strings.NewReplacer("_", " ", "-", " ").Replace(stem)
+	return strings.ToLower(strings.TrimSpace(stem))
+}
+
+func containsFold(list []string, s string) bool {
+	for _, item := range list {
+		if strings.EqualFold(item, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// maybeAutoSaveSkill: 当写入 .xirang/scripts/ 下脚本时自动沉淀指纹 meta（经验闭环）
+func maybeAutoSaveSkill(scriptPath, content string) {
+	cleanPath := filepath.Clean(scriptPath)
+	absScripts, err := filepath.Abs(scriptsDir)
+	if err != nil {
+		return
+	}
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return
+	}
+	if !strings.HasPrefix(absPath, absScripts) {
+		return
+	}
+	base := filepath.Base(cleanPath)
+	if strings.HasSuffix(base, ".meta.json") {
+		return
+	}
+	metaPath := filepath.Join(scriptsDir, base+".meta.json")
+	if _, err := os.Stat(metaPath); err == nil {
+		return
+	}
+	pattern := deriveSkillPattern(content, base)
+	if pattern == "" {
+		return
+	}
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	desc := "Agent 沉淀的自愈脚本（自动指纹）"
+	if err := saveFastSkill(name, pattern, cleanPath, desc); err != nil {
+		return
+	}
+	sessionMu.Lock()
+	sessionScripts = append(sessionScripts, cleanPath)
+	sessionMu.Unlock()
+}
+
+// settleSessionSkills: 任务成功结束时确保本轮脚本均有指纹 meta
+func settleSessionSkills() {
+	sessionMu.Lock()
+	scripts := append([]string(nil), sessionScripts...)
+	sessionScripts = nil
+	sessionMu.Unlock()
+	for _, p := range scripts {
+		base := filepath.Base(p)
+		metaPath := filepath.Join(scriptsDir, base+".meta.json")
+		if _, err := os.Stat(metaPath); err == nil {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		maybeAutoSaveSkill(p, string(data))
+	}
+}
+
 // 自动扫描已沉淀的本地脚本与技能 (越用越熟练)
 func loadEvolvedSkills() string {
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
@@ -249,7 +390,7 @@ func loadEvolvedSkills() string {
 	if err := os.MkdirAll(skillsDir, 0755); err != nil {
 		return fmt.Sprintf("【本地经验库】初始化失败: %v", err)
 	}
-	
+
 	files, err := os.ReadDir(scriptsDir)
 	if err != nil || len(files) == 0 {
 		return "【本地经验库】: 当前为首次运行，暂无已沉淀的常驻脚本。"
@@ -273,8 +414,45 @@ func loadEvolvedSkills() string {
 	return sb.String()
 }
 
-// 记录文件备份事务
+// trackNewDirsLocked 在写入目标前，把尚不存在的父目录记入撤销栈（需已持锁）
+func trackNewDirsLocked(cleanPath string) {
+	dir := filepath.Dir(cleanPath)
+	var missing []string
+	for {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			missing = append([]string{dir}, missing...)
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+			continue
+		}
+		break
+	}
+	for _, d := range missing {
+		d = filepath.Clean(d)
+		dup := false
+		for _, op := range rollbackStack {
+			if op.Action == "delete_dir" && filepath.Clean(op.Target) == d {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			rollbackStack = append(rollbackStack, RollbackOp{
+				Action: "delete_dir",
+				Target: d,
+			})
+		}
+	}
+}
+
+// 记录文件备份事务（线程安全，并持久化到 .xirang/backups/index.json）
 func trackFileBackup(filePath string) {
+	rollbackMu.Lock()
+	defer rollbackMu.Unlock()
+
 	cleanPath := filepath.Clean(filePath)
 	for _, op := range rollbackStack {
 		if filepath.Clean(op.Target) == cleanPath {
@@ -282,54 +460,74 @@ func trackFileBackup(filePath string) {
 		}
 	}
 
+	trackNewDirsLocked(cleanPath)
+
 	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
 		// 原本不存在，回滚操作为删除新产生的文件
 		rollbackStack = append(rollbackStack, RollbackOp{
 			Action: "delete_file",
 			Target: cleanPath,
 		})
+		persistRollbackLocked()
 		return
 	}
 
 	// 已存在，先备份原内容
-	os.MkdirAll(backupDir, 0755)
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return
+	}
 	backupName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(cleanPath))
 	backupPath := filepath.Join(backupDir, backupName)
-	
+
 	in, err := os.ReadFile(cleanPath)
 	if err == nil {
-		os.WriteFile(backupPath, in, 0644)
+		if err := os.WriteFile(backupPath, in, 0644); err != nil {
+			return
+		}
 		rollbackStack = append(rollbackStack, RollbackOp{
 			Action:     "restore_file",
 			Target:     cleanPath,
 			BackupPath: backupPath,
 		})
+		persistRollbackLocked()
 	}
 }
 
-// 执行一键安全回滚
+// 执行一键安全回滚（先加载磁盘事务索引，支持跨进程撤销）
 func executeRollback() {
-	if len(rollbackStack) == 0 {
+	loadRollbackStack()
+
+	rollbackMu.Lock()
+	ops := make([]RollbackOp, len(rollbackStack))
+	copy(ops, rollbackStack)
+	rollbackStack = nil
+	rollbackMu.Unlock()
+
+	if len(ops) == 0 {
 		fmt.Println("[ℹ️ 事务回滚] 当前未产生系统变更，无需撤销。")
 		return
 	}
 	fmt.Println("\n================================================================")
 	fmt.Println("⏪ [安全回滚] 正在逆序撤销本次任务所作的全部环境变更...")
-	for i := len(rollbackStack) - 1; i >= 0; i-- {
-		op := rollbackStack[i]
+	for i := len(ops) - 1; i >= 0; i-- {
+		op := ops[i]
 		switch op.Action {
 		case "delete_file":
 			os.Remove(op.Target)
 			fmt.Printf("   -> 已清除新生成的文件: %s\n", op.Target)
+		case "delete_dir":
+			os.RemoveAll(op.Target)
+			fmt.Printf("   -> 已移除新建目录: %s\n", op.Target)
 		case "restore_file":
 			data, err := os.ReadFile(op.BackupPath)
 			if err == nil {
+				os.MkdirAll(filepath.Dir(op.Target), 0755)
 				os.WriteFile(op.Target, data, 0644)
 				fmt.Printf("   -> 已还原原始文件备份: %s\n", op.Target)
 			}
 		}
 	}
-	os.RemoveAll(backupDir) // 仅清理撤销备份，保留 .xirang/scripts 经验资产
+	os.RemoveAll(backupDir) // 清理撤销备份与索引，保留 .xirang/scripts 经验资产
 	fmt.Println("✅ [回滚完成] 宿主环境已完全恢复至执行前初始状态！")
 	fmt.Println("================================================================")
 }
@@ -343,14 +541,14 @@ func smartPruneLog(raw string) string {
 
 	head := lines[:8]
 	tail := lines[len(lines)-12:]
-	
+
 	// 筛选中段关键报错与警告行
 	var errorLines []string
 	for _, l := range lines[8 : len(lines)-12] {
 		lower := strings.ToLower(l)
-		if strings.Contains(lower, "error") || strings.Contains(lower, "fail") || 
-		   strings.Contains(lower, "fatal") || strings.Contains(lower, "warn") ||
-		   strings.Contains(lower, "exception") || strings.Contains(lower, "denied") {
+		if strings.Contains(lower, "error") || strings.Contains(lower, "fail") ||
+			strings.Contains(lower, "fatal") || strings.Contains(lower, "warn") ||
+			strings.Contains(lower, "exception") || strings.Contains(lower, "denied") {
 			errorLines = append(errorLines, "   [!] "+l)
 			if len(errorLines) >= 8 {
 				break
@@ -422,15 +620,36 @@ func checkSafetyFilter(command string, forbiddenCmds []string) (bool, string) {
 }
 
 // 路径白名单守卫：检查是否写入未授权目录
+// 未配置 allowed_paths 时默认仅允许 cwd 与 .xirang（可用 XIRANG_UNRESTRICTED_PATHS=1 放开）
 func checkPathGuard(targetPath string, allowedPaths []string) (bool, string) {
-	if len(allowedPaths) == 0 {
-		return true, "" // 开发者未设限时允许
-	}
 	absTarget, err := filepath.Abs(targetPath)
 	if err != nil {
 		return false, fmt.Sprintf("路径解析错误: %v", err)
 	}
 	absTarget = filepath.Clean(absTarget)
+
+	if len(allowedPaths) == 0 {
+		if os.Getenv("XIRANG_UNRESTRICTED_PATHS") == "1" {
+			return true, ""
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			return false, fmt.Sprintf("路径解析错误: %v", err)
+		}
+		roots := []string{cwd, filepath.Join(cwd, xirangHomeDir)}
+		for _, root := range roots {
+			absRoot, err := filepath.Abs(root)
+			if err != nil {
+				continue
+			}
+			absRoot = filepath.Clean(absRoot)
+			rel, err := filepath.Rel(absRoot, absTarget)
+			if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
+				return true, ""
+			}
+		}
+		return false, fmt.Sprintf("【PathGuard 默认沙箱】未配置 allowed_paths，仅允许写入当前目录或 %s；目标 '%s' 被拒绝。如需放开请在规约中显式声明白名单，或设置 XIRANG_UNRESTRICTED_PATHS=1。", xirangHomeDir, targetPath)
+	}
 
 	for _, allowed := range allowedPaths {
 		absAllowed, err := filepath.Abs(allowed)
@@ -520,7 +739,7 @@ func executeCommand(command string, timeoutSec int) (int, string) {
 // 原生 HTTP 下载
 func downloadFile(url, destPath string) (bool, string) {
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: newTLSConfig(),
 	}
 	client := &http.Client{
 		Transport: tr,
@@ -581,6 +800,7 @@ func executeSubAction(sub SubAction, cfg *Config) (string, bool) {
 		if err != nil {
 			return fmt.Sprintf("写入文件失败: %v", err), false
 		}
+		maybeAutoSaveSkill(sub.Path, sub.Content)
 		return fmt.Sprintf("文件已成功写入: %s (已创建事务备份)", sub.Path), true
 
 	case "read_file":
@@ -636,6 +856,10 @@ func executeSubAction(sub SubAction, cfg *Config) (string, bool) {
 			return fmt.Sprintf("未找到名为 '%s' 的工具", sub.ToolName), false
 		}
 		cmdStr := strings.ReplaceAll(targetTool.CommandTmpl, "{{args}}", sub.ToolArgs)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{url}}", sub.URL)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{path}}", sub.Path)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{command}}", sub.Command)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{tool_name}}", sub.ToolName)
 		timeout := targetTool.TimeoutSec
 		if timeout <= 0 {
 			timeout = cfg.TimeoutSec
@@ -663,7 +887,7 @@ func callLLM(providers []Provider, messages []map[string]string) (*Decision, str
 		pBytes, _ := json.Marshal(pPayload)
 
 		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: newTLSConfig(),
 		}
 		client := &http.Client{Transport: tr, Timeout: 90 * time.Second}
 
@@ -1104,6 +1328,7 @@ func runAgentLoop(cfg *Config) {
 				fmt.Println("✅ [DoD 验收网关] 真实业务验证完全通过！硬件与服务均达到交付标准！")
 			}
 
+			settleSessionSkills()
 			fmt.Println("\n================================================================")
 			fmt.Println("🎉 [成功] 息壤 (XiRang) v4.0 已全自主确认：所有任务与终态验收全部搞定！")
 			fmt.Println("================================================================")
@@ -1113,10 +1338,10 @@ func runAgentLoop(cfg *Config) {
 		// 多线并发批处理 (Parallel Batch Actions)
 		if decision.Action == "batch_actions" && len(decision.BatchActions) > 0 {
 			fmt.Printf("🚀 [多线并发] 启动 %d 个子任务并行执行流水线...\n", len(decision.BatchActions))
-			
+
 			results := make([]string, len(decision.BatchActions))
 			var wg sync.WaitGroup
-			
+
 			for i, sub := range decision.BatchActions {
 				wg.Add(1)
 				go func(idx int, action SubAction) {
@@ -1287,13 +1512,22 @@ func runDoctorMode(cfg *Config) {
 		// 优先尝试本地已有经验指纹快速命中 (Fast-Path)
 		if fastSkill := findFastSkill(input); fastSkill != nil {
 			fmt.Printf("\n⚡ [经验秒级命中!] 识别到已沉淀的已知问题特征: \"%s\"\n", fastSkill.Pattern)
-			fmt.Printf("   -> 正在直接调取本地经过验证的专属脚本: %s (%s)...\n", fastSkill.ScriptPath, fastSkill.Description)
-			code, out := executeCommand(fastSkill.ScriptPath, 120)
-			if code == 0 {
-				fmt.Printf("✅ [秒级自愈成功!] 已直接通过本地经验修复该问题 (耗时 0.2s，未消耗 Token)！\n回显:\n%s\n", out)
-				continue
-			} else {
+			fmt.Printf("   -> 候选脚本: %s (%s)\n", fastSkill.ScriptPath, fastSkill.Description)
+			fmt.Print("   -> 是否立即执行该本地脚本? [Y/n]: ")
+			confirm, _ := reader.ReadString('\n')
+			confirm = strings.TrimSpace(confirm)
+			if confirm == "" || strings.EqualFold(confirm, "y") || strings.EqualFold(confirm, "yes") {
+				fmt.Printf("   -> 正在直接调取本地经过验证的专属脚本: %s ...\n", fastSkill.ScriptPath)
+				code, out := executeCommand(fastSkill.ScriptPath, 120)
+				if code == 0 {
+					fmt.Printf("✅ [秒级自愈成功!] 已直接通过本地经验修复该问题 (未消耗 Token)！\n回显:\n%s\n", out)
+					// 强化已有指纹（更新 meta 时间戳语义：重写确保存在）
+					_ = saveFastSkill(fastSkill.Name, fastSkill.Pattern, fastSkill.ScriptPath, fastSkill.Description)
+					continue
+				}
 				fmt.Printf("⚠️ 本地快速脚本执行未完全解决，正在无缝转入云端大模型进行深度自愈推演...\n")
+			} else {
+				fmt.Println("   -> 已跳过本地脚本，转入云端大模型深度排障...")
 			}
 		}
 
