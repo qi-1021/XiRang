@@ -1,7 +1,6 @@
 package main
 
 import (
-	"regexp"
 	"bufio"
 	"bytes"
 	"crypto/tls"
@@ -13,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -40,9 +40,12 @@ type Milestone struct {
 
 // 售后健康巡检探针 (Health Check & Watchdog)
 type HealthProbe struct {
-	Name     string `json:"name"`     // 服务/组件名称
-	CheckCmd string `json:"check_cmd"` // 快速健康检查命令 (退出码 0 为正常)
-	FixGoal  string `json:"fix_goal"`  // 一旦异常时触发的自愈排错目标
+	Name       string `json:"name"`                // 服务/组件名称
+	Kind       string `json:"kind,omitempty"`      // cmd|tcp|http|file，默认 cmd
+	Target     string `json:"target,omitempty"`    // host:port / URL / 文件路径
+	CheckCmd   string `json:"check_cmd,omitempty"` // 快速健康检查命令 (kind=cmd 时)
+	FixGoal    string `json:"fix_goal,omitempty"`  // 一旦异常时触发的自愈排错目标
+	TimeoutSec int    `json:"timeout_sec,omitempty"`
 }
 
 // 动态外挂工具定义 (MCP/CLI Plugin)
@@ -63,12 +66,12 @@ type RollbackOp struct {
 
 // 工业级结构化任务规约 (Task Specification v3.0)
 type TaskSpecification struct {
-	TaskName        string       `json:"task_name"`
-	Goal            string       `json:"goal"`
-	AllowedPaths    []string     `json:"allowed_paths"`    // 写入路径白名单 (安全沙箱)
-	ForbiddenCmds   []string     `json:"forbidden_cmds"`   // 危险指令黑名单
-	Milestones      []Milestone  `json:"milestones"`       // 分步里程碑
-	VerificationCmd string       `json:"verification_cmd"` // 终态防作弊验收命令 (DoD)
+	TaskName        string        `json:"task_name"`
+	Goal            string        `json:"goal"`
+	AllowedPaths    []string      `json:"allowed_paths"`    // 写入路径白名单 (安全沙箱)
+	ForbiddenCmds   []string      `json:"forbidden_cmds"`   // 危险指令黑名单
+	Milestones      []Milestone   `json:"milestones"`       // 分步里程碑
+	VerificationCmd string        `json:"verification_cmd"` // 终态防作弊验收命令 (DoD)
 	StrictRules     []string      `json:"strict_rules"`     // 强制规则
 	CustomTools     []CustomTool  `json:"custom_tools"`     // 打包预置的专属领域扩展工具箱
 	HealthProbes    []HealthProbe `json:"health_probes"`    // 售后巡检探针
@@ -90,57 +93,103 @@ type Config struct {
 	MaxSteps    int                `json:"max_steps"`
 	TimeoutSec  int                `json:"timeout_sec"`
 	ContextVars map[string]string  `json:"context_vars"`
+	Permission  string             `json:"permission,omitempty"` // readonly|assist|auto
 }
 
 // 单个原子动作 (用于单步或并发 batch_actions)
 type SubAction struct {
-	ID          string   `json:"id,omitempty"`
-	Action      string   `json:"action"` // "run_command", "write_file", "read_file", "list_dir", "http_download", "call_tool"
-	Command     string   `json:"command,omitempty"`
-	Path        string   `json:"path,omitempty"`
-	Content     string   `json:"content,omitempty"`
-	URL         string   `json:"url,omitempty"`
-	ToolName    string   `json:"tool_name,omitempty"`
-	ToolArgs    string   `json:"tool_args,omitempty"`
-	Explanation string   `json:"explanation,omitempty"`
+	ID          string `json:"id,omitempty"`
+	Action      string `json:"action"` // "run_command", "write_file", "read_file", "list_dir", "http_download", "call_tool"
+	Command     string `json:"command,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Content     string `json:"content,omitempty"`
+	URL         string `json:"url,omitempty"`
+	ToolName    string `json:"tool_name,omitempty"`
+	ToolArgs    string `json:"tool_args,omitempty"`
+	Explanation string `json:"explanation,omitempty"`
 }
 
 // 决策结构体 (支持单步、并发批处理 batch_actions、黑板更新、事务与人机交互)
 type Decision struct {
-	Action        string      `json:"action"` // "run_command", "write_file", "read_file", "list_dir", "http_download", "batch_actions", "call_tool", "ask_human", "report_milestone", "finish"
-	Thought       string      `json:"thought"`
-	Explanation   string      `json:"explanation"`
-	
+	Action      string `json:"action"` // "run_command", "write_file", "read_file", "list_dir", "http_download", "batch_actions", "call_tool", "ask_human", "report_milestone", "finish"
+	Thought     string `json:"thought"`
+	Explanation string `json:"explanation"`
+
 	// 单步动作参数
-	Command       string      `json:"command,omitempty"`
-	Path          string      `json:"path,omitempty"`
-	Content       string      `json:"content,omitempty"`
-	URL           string      `json:"url,omitempty"`
-	ToolName      string      `json:"tool_name,omitempty"`
-	ToolArgs      string      `json:"tool_args,omitempty"`
-	
+	Command  string `json:"command,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Content  string `json:"content,omitempty"`
+	URL      string `json:"url,omitempty"`
+	ToolName string `json:"tool_name,omitempty"`
+	ToolArgs string `json:"tool_args,omitempty"`
+
 	// 并发多线操作队列 (支持完全并行的任务批处理)
-	BatchActions  []SubAction `json:"batch_actions,omitempty"`
+	BatchActions []SubAction `json:"batch_actions,omitempty"`
 
 	// 状态便签与反思黑板 (Working Memory & Scratchpad)
-	Scratchpad    string      `json:"scratchpad,omitempty"` // 当前掌握的事实、排障假设与下一步计划
+	Scratchpad string `json:"scratchpad,omitempty"` // 当前掌握的事实、排障假设与下一步计划
 
 	// 交互决策
-	Question      string      `json:"question,omitempty"`
-	Options       []string    `json:"options,omitempty"`
-	Milestone     string      `json:"milestone,omitempty"`
+	Question  string   `json:"question,omitempty"`
+	Options   []string `json:"options,omitempty"`
+	Milestone string   `json:"milestone,omitempty"`
 }
 
 var defaultProviders = []Provider{}
 
 // 统一工作空间隔离与持久化知识经验库 (.xirang/)
 var (
+	rollbackMu    sync.Mutex
 	rollbackStack []RollbackOp
 	xirangHomeDir = ".xirang"
 	backupDir     = filepath.Join(xirangHomeDir, "backups")
 	scriptsDir    = filepath.Join(xirangHomeDir, "scripts")
 	skillsDir     = filepath.Join(xirangHomeDir, "skills")
+	// sessionScripts: 本轮写入经验库的脚本，成功结束时自动沉淀指纹
+	sessionScripts []string
+	sessionMu      sync.Mutex
 )
+
+func rollbackIndexPath() string {
+	return filepath.Join(backupDir, "index.json")
+}
+
+func persistRollbackLocked() {
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return
+	}
+	data, err := json.MarshalIndent(rollbackStack, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(rollbackIndexPath(), data, 0644)
+}
+
+// loadRollbackStack 从磁盘恢复事务栈，使跨进程 --rollback 可用
+func loadRollbackStack() {
+	rollbackMu.Lock()
+	defer rollbackMu.Unlock()
+	if len(rollbackStack) > 0 {
+		return
+	}
+	data, err := os.ReadFile(rollbackIndexPath())
+	if err != nil {
+		return
+	}
+	var ops []RollbackOp
+	if err := json.Unmarshal(data, &ops); err == nil {
+		rollbackStack = ops
+	}
+}
+
+func allowInsecureTLS() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("XIRANG_INSECURE_TLS")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+func newTLSConfig() *tls.Config {
+	return &tls.Config{InsecureSkipVerify: allowInsecureTLS()}
+}
 
 func init() {
 	// 自动平滑升级历史 .zen 目录，若存在则无缝迁移至 .xirang
@@ -241,6 +290,102 @@ func saveFastSkill(skillName, pattern, scriptPath, description string) error {
 	return os.WriteFile(metaPath, data, 0644)
 }
 
+// deriveSkillPattern 从脚本内容/文件名提炼故障指纹关键字
+func deriveSkillPattern(content, filename string) string {
+	candidates := []string{
+		"address already in use",
+		"port already in use",
+		"cuda out of memory",
+		"out of memory",
+		"permission denied",
+		"command not found",
+		"connection refused",
+		"no such file or directory",
+		"failed to bind",
+	}
+	lower := strings.ToLower(content)
+	var hits []string
+	for _, c := range candidates {
+		if strings.Contains(lower, c) && !containsFold(hits, c) {
+			hits = append(hits, c)
+		}
+	}
+	if len(hits) > 0 {
+		if len(hits) > 3 {
+			hits = hits[:3]
+		}
+		return strings.Join(hits, " | ")
+	}
+	stem := strings.TrimSuffix(filename, filepath.Ext(filename))
+	stem = strings.NewReplacer("_", " ", "-", " ").Replace(stem)
+	return strings.ToLower(strings.TrimSpace(stem))
+}
+
+func containsFold(list []string, s string) bool {
+	for _, item := range list {
+		if strings.EqualFold(item, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// maybeAutoSaveSkill: 当写入 .xirang/scripts/ 下脚本时自动沉淀指纹 meta（经验闭环）
+func maybeAutoSaveSkill(scriptPath, content string) {
+	cleanPath := filepath.Clean(scriptPath)
+	absScripts, err := filepath.Abs(scriptsDir)
+	if err != nil {
+		return
+	}
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return
+	}
+	if !strings.HasPrefix(absPath, absScripts) {
+		return
+	}
+	base := filepath.Base(cleanPath)
+	if strings.HasSuffix(base, ".meta.json") {
+		return
+	}
+	metaPath := filepath.Join(scriptsDir, base+".meta.json")
+	if _, err := os.Stat(metaPath); err == nil {
+		return
+	}
+	pattern := deriveSkillPattern(content, base)
+	if pattern == "" {
+		return
+	}
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	desc := "Agent 沉淀的自愈脚本（自动指纹）"
+	if err := saveFastSkill(name, pattern, cleanPath, desc); err != nil {
+		return
+	}
+	sessionMu.Lock()
+	sessionScripts = append(sessionScripts, cleanPath)
+	sessionMu.Unlock()
+}
+
+// settleSessionSkills: 任务成功结束时确保本轮脚本均有指纹 meta
+func settleSessionSkills() {
+	sessionMu.Lock()
+	scripts := append([]string(nil), sessionScripts...)
+	sessionScripts = nil
+	sessionMu.Unlock()
+	for _, p := range scripts {
+		base := filepath.Base(p)
+		metaPath := filepath.Join(scriptsDir, base+".meta.json")
+		if _, err := os.Stat(metaPath); err == nil {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		maybeAutoSaveSkill(p, string(data))
+	}
+}
+
 // 自动扫描已沉淀的本地脚本与技能 (越用越熟练)
 func loadEvolvedSkills() string {
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
@@ -249,7 +394,7 @@ func loadEvolvedSkills() string {
 	if err := os.MkdirAll(skillsDir, 0755); err != nil {
 		return fmt.Sprintf("【本地经验库】初始化失败: %v", err)
 	}
-	
+
 	files, err := os.ReadDir(scriptsDir)
 	if err != nil || len(files) == 0 {
 		return "【本地经验库】: 当前为首次运行，暂无已沉淀的常驻脚本。"
@@ -273,8 +418,45 @@ func loadEvolvedSkills() string {
 	return sb.String()
 }
 
-// 记录文件备份事务
+// trackNewDirsLocked 在写入目标前，把尚不存在的父目录记入撤销栈（需已持锁）
+func trackNewDirsLocked(cleanPath string) {
+	dir := filepath.Dir(cleanPath)
+	var missing []string
+	for {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			missing = append([]string{dir}, missing...)
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+			continue
+		}
+		break
+	}
+	for _, d := range missing {
+		d = filepath.Clean(d)
+		dup := false
+		for _, op := range rollbackStack {
+			if op.Action == "delete_dir" && filepath.Clean(op.Target) == d {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			rollbackStack = append(rollbackStack, RollbackOp{
+				Action: "delete_dir",
+				Target: d,
+			})
+		}
+	}
+}
+
+// 记录文件备份事务（线程安全，并持久化到 .xirang/backups/index.json）
 func trackFileBackup(filePath string) {
+	rollbackMu.Lock()
+	defer rollbackMu.Unlock()
+
 	cleanPath := filepath.Clean(filePath)
 	for _, op := range rollbackStack {
 		if filepath.Clean(op.Target) == cleanPath {
@@ -282,54 +464,74 @@ func trackFileBackup(filePath string) {
 		}
 	}
 
+	trackNewDirsLocked(cleanPath)
+
 	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
 		// 原本不存在，回滚操作为删除新产生的文件
 		rollbackStack = append(rollbackStack, RollbackOp{
 			Action: "delete_file",
 			Target: cleanPath,
 		})
+		persistRollbackLocked()
 		return
 	}
 
 	// 已存在，先备份原内容
-	os.MkdirAll(backupDir, 0755)
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return
+	}
 	backupName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), filepath.Base(cleanPath))
 	backupPath := filepath.Join(backupDir, backupName)
-	
+
 	in, err := os.ReadFile(cleanPath)
 	if err == nil {
-		os.WriteFile(backupPath, in, 0644)
+		if err := os.WriteFile(backupPath, in, 0644); err != nil {
+			return
+		}
 		rollbackStack = append(rollbackStack, RollbackOp{
 			Action:     "restore_file",
 			Target:     cleanPath,
 			BackupPath: backupPath,
 		})
+		persistRollbackLocked()
 	}
 }
 
-// 执行一键安全回滚
+// 执行一键安全回滚（先加载磁盘事务索引，支持跨进程撤销）
 func executeRollback() {
-	if len(rollbackStack) == 0 {
+	loadRollbackStack()
+
+	rollbackMu.Lock()
+	ops := make([]RollbackOp, len(rollbackStack))
+	copy(ops, rollbackStack)
+	rollbackStack = nil
+	rollbackMu.Unlock()
+
+	if len(ops) == 0 {
 		fmt.Println("[ℹ️ 事务回滚] 当前未产生系统变更，无需撤销。")
 		return
 	}
 	fmt.Println("\n================================================================")
 	fmt.Println("⏪ [安全回滚] 正在逆序撤销本次任务所作的全部环境变更...")
-	for i := len(rollbackStack) - 1; i >= 0; i-- {
-		op := rollbackStack[i]
+	for i := len(ops) - 1; i >= 0; i-- {
+		op := ops[i]
 		switch op.Action {
 		case "delete_file":
 			os.Remove(op.Target)
 			fmt.Printf("   -> 已清除新生成的文件: %s\n", op.Target)
+		case "delete_dir":
+			os.RemoveAll(op.Target)
+			fmt.Printf("   -> 已移除新建目录: %s\n", op.Target)
 		case "restore_file":
 			data, err := os.ReadFile(op.BackupPath)
 			if err == nil {
+				os.MkdirAll(filepath.Dir(op.Target), 0755)
 				os.WriteFile(op.Target, data, 0644)
 				fmt.Printf("   -> 已还原原始文件备份: %s\n", op.Target)
 			}
 		}
 	}
-	os.RemoveAll(backupDir) // 仅清理撤销备份，保留 .xirang/scripts 经验资产
+	os.RemoveAll(backupDir) // 清理撤销备份与索引，保留 .xirang/scripts 经验资产
 	fmt.Println("✅ [回滚完成] 宿主环境已完全恢复至执行前初始状态！")
 	fmt.Println("================================================================")
 }
@@ -343,14 +545,14 @@ func smartPruneLog(raw string) string {
 
 	head := lines[:8]
 	tail := lines[len(lines)-12:]
-	
+
 	// 筛选中段关键报错与警告行
 	var errorLines []string
 	for _, l := range lines[8 : len(lines)-12] {
 		lower := strings.ToLower(l)
-		if strings.Contains(lower, "error") || strings.Contains(lower, "fail") || 
-		   strings.Contains(lower, "fatal") || strings.Contains(lower, "warn") ||
-		   strings.Contains(lower, "exception") || strings.Contains(lower, "denied") {
+		if strings.Contains(lower, "error") || strings.Contains(lower, "fail") ||
+			strings.Contains(lower, "fatal") || strings.Contains(lower, "warn") ||
+			strings.Contains(lower, "exception") || strings.Contains(lower, "denied") {
 			errorLines = append(errorLines, "   [!] "+l)
 			if len(errorLines) >= 8 {
 				break
@@ -422,15 +624,36 @@ func checkSafetyFilter(command string, forbiddenCmds []string) (bool, string) {
 }
 
 // 路径白名单守卫：检查是否写入未授权目录
+// 未配置 allowed_paths 时默认仅允许 cwd 与 .xirang（可用 XIRANG_UNRESTRICTED_PATHS=1 放开）
 func checkPathGuard(targetPath string, allowedPaths []string) (bool, string) {
-	if len(allowedPaths) == 0 {
-		return true, "" // 开发者未设限时允许
-	}
 	absTarget, err := filepath.Abs(targetPath)
 	if err != nil {
 		return false, fmt.Sprintf("路径解析错误: %v", err)
 	}
 	absTarget = filepath.Clean(absTarget)
+
+	if len(allowedPaths) == 0 {
+		if os.Getenv("XIRANG_UNRESTRICTED_PATHS") == "1" {
+			return true, ""
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			return false, fmt.Sprintf("路径解析错误: %v", err)
+		}
+		roots := []string{cwd, filepath.Join(cwd, xirangHomeDir)}
+		for _, root := range roots {
+			absRoot, err := filepath.Abs(root)
+			if err != nil {
+				continue
+			}
+			absRoot = filepath.Clean(absRoot)
+			rel, err := filepath.Rel(absRoot, absTarget)
+			if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
+				return true, ""
+			}
+		}
+		return false, fmt.Sprintf("【PathGuard 默认沙箱】未配置 allowed_paths，仅允许写入当前目录或 %s；目标 '%s' 被拒绝。如需放开请在规约中显式声明白名单，或设置 XIRANG_UNRESTRICTED_PATHS=1。", xirangHomeDir, targetPath)
+	}
 
 	for _, allowed := range allowedPaths {
 		absAllowed, err := filepath.Abs(allowed)
@@ -520,7 +743,7 @@ func executeCommand(command string, timeoutSec int) (int, string) {
 // 原生 HTTP 下载
 func downloadFile(url, destPath string) (bool, string) {
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: newTLSConfig(),
 	}
 	client := &http.Client{
 		Transport: tr,
@@ -554,6 +777,13 @@ func downloadFile(url, destPath string) (bool, string) {
 
 // 单个子动作执行器 (供单步或并发批处理复用)
 func executeSubAction(sub SubAction, cfg *Config) (string, bool) {
+	perm := PermAssist
+	if cfg != nil && cfg.Permission != "" {
+		perm = parsePermissionMode(cfg.Permission)
+	}
+	if ok, reason := requirePermission(perm, sub.Action); !ok {
+		return reason, false
+	}
 	switch sub.Action {
 	case "run_command":
 		var forbidden []string
@@ -581,6 +811,7 @@ func executeSubAction(sub SubAction, cfg *Config) (string, bool) {
 		if err != nil {
 			return fmt.Sprintf("写入文件失败: %v", err), false
 		}
+		maybeAutoSaveSkill(sub.Path, sub.Content)
 		return fmt.Sprintf("文件已成功写入: %s (已创建事务备份)", sub.Path), true
 
 	case "read_file":
@@ -636,6 +867,10 @@ func executeSubAction(sub SubAction, cfg *Config) (string, bool) {
 			return fmt.Sprintf("未找到名为 '%s' 的工具", sub.ToolName), false
 		}
 		cmdStr := strings.ReplaceAll(targetTool.CommandTmpl, "{{args}}", sub.ToolArgs)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{url}}", sub.URL)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{path}}", sub.Path)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{command}}", sub.Command)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{tool_name}}", sub.ToolName)
 		timeout := targetTool.TimeoutSec
 		if timeout <= 0 {
 			timeout = cfg.TimeoutSec
@@ -663,7 +898,7 @@ func callLLM(providers []Provider, messages []map[string]string) (*Decision, str
 		pBytes, _ := json.Marshal(pPayload)
 
 		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: newTLSConfig(),
 		}
 		client := &http.Client{Transport: tr, Timeout: 90 * time.Second}
 
@@ -785,7 +1020,38 @@ func main() {
 	skillsFlag := flag.Bool("skills", false, "查看并管理本地已沉淀的经验脚本与故障指纹库 (.xirang/scripts/)")
 	forgeFlag := flag.Bool("forge", false, "启动息壤工坊图形创作控制台 (XiRang Studio GUI)")
 	guiAliasFlag := flag.Bool("gui", false, "启动息壤工坊图形创作控制台 (同 -forge)")
+	consoleFlag := flag.Bool("console", false, "启动 CLI/TUI 息壤操作台")
+	modeFlag := flag.String("mode", "assist", "权限模式: readonly | assist | auto")
+	resumeFlag := flag.String("resume", "", "从会话 ID 或 latest 恢复执行")
+	validateSpecFlag := flag.Bool("validate-spec", false, "仅校验任务规约结构后退出")
 	flag.Parse()
+
+	if *validateSpecFlag {
+		var spec TaskSpecification
+		var err error
+		if *specFlag != "" {
+			if data, readErr := os.ReadFile(*specFlag); readErr == nil {
+				err = json.Unmarshal(data, &spec)
+			} else {
+				err = json.Unmarshal([]byte(*specFlag), &spec)
+			}
+		}
+		if err != nil {
+			fmt.Printf("[X] 解析规约失败: %v\n", err)
+			os.Exit(1)
+		}
+		errs := validateTaskSpec(&spec)
+		printSpecValidation(errs)
+		if len(errs) > 0 {
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *skillsFlag {
+		runSkillsCLI(flag.Args())
+		return
+	}
 
 	if *forgeFlag || *guiAliasFlag {
 		server := gui.NewForgeServer(".")
@@ -808,7 +1074,9 @@ func main() {
 		MaxSteps:    40,
 		TimeoutSec:  300,
 		ContextVars: make(map[string]string),
+		Permission:  *modeFlag,
 	}
+	permMode := parsePermissionMode(*modeFlag)
 
 	// 1. 优先尝试解密还原由 xirang-builder 熔炼嵌入的开发者保密模型配置
 	if protectedCfg := loadEmbeddedProtectedConfig(); protectedCfg != nil {
@@ -845,15 +1113,6 @@ func main() {
 				cfg.Goal = spec.Goal
 			}
 		}
-	}
-
-	// 处理 -skills (经验指纹查看)
-	if *skillsFlag {
-		fmt.Println("================================================================")
-		fmt.Println("📜 息壤 (XiRang) 本地经验与故障指纹资产库 (.xirang/scripts/)")
-		fmt.Println("================================================================")
-		fmt.Println(loadEvolvedSkills())
-		return
 	}
 
 	// 3. 外部 JSON 配置文件 (优先 xirang_config.json，自动兼容 zen_config.json)
@@ -967,10 +1226,45 @@ func main() {
 		}
 	}
 
-	runAgentLoop(&cfg)
+	// 规约结构校验（警告不阻断，除非已有 -validate-spec）
+	if cfg.TaskSpec != nil {
+		printSpecValidation(validateTaskSpec(cfg.TaskSpec))
+	}
+
+	if *consoleFlag {
+		runConsole(&cfg, permMode)
+		return
+	}
+
+	if *resumeFlag != "" {
+		st := loadSession(*resumeFlag)
+		if st == nil {
+			fmt.Printf("[X] 无法恢复会话: %s\n", *resumeFlag)
+			os.Exit(1)
+		}
+		if st.Goal != "" && cfg.Goal == "" {
+			cfg.Goal = st.Goal
+		}
+		if st.TaskSpec != nil {
+			cfg.TaskSpec = st.TaskSpec
+		}
+		fmt.Printf("[*] 已恢复会话 %s (step=%d)\n", st.ID, st.Step)
+		runAgentLoopWithSession(&cfg, permMode, st.ID, st)
+		return
+	}
+
+	runAgentLoopWithSession(&cfg, permMode, newSessionID(), nil)
 }
 
 func runAgentLoop(cfg *Config) {
+	runAgentLoopWithSession(cfg, parsePermissionMode(cfg.Permission), newSessionID(), nil)
+}
+
+func runAgentLoopWithSession(cfg *Config, perm PermissionMode, sessionID string, resume *SessionState) {
+	cfg.Permission = string(perm)
+	audit := NewAuditLogger(sessionID, perm)
+	audit.Log("session", "start", sessionID, true, cfg.Goal)
+
 	fmt.Println("================================================================")
 	fmt.Println("    🌱 息壤 (XiRang) v4.0: 工业级全并发·生生不息·自愈演进系统智能体")
 	fmt.Println("    (多线并发批处理 · 黑板记忆剪枝 · 动态工具箱 · 事务日志撤销)")
@@ -985,6 +1279,7 @@ func runAgentLoop(cfg *Config) {
 		fmt.Printf("[*] 可用驱动器: %v\n", drives)
 	}
 	fmt.Printf("[*] 核心目标: %s\n", cfg.Goal)
+	fmt.Printf("[*] 权限模式: %s | 会话: %s\n", perm, sessionID)
 
 	if cfg.TaskSpec != nil {
 		fmt.Printf("[*] 绑定任务规约: %s (阶段数: %d)\n", cfg.TaskSpec.TaskName, len(cfg.TaskSpec.Milestones))
@@ -1066,17 +1361,64 @@ func runAgentLoop(cfg *Config) {
 		{"role": "system", "content": systemPrompt},
 		{"role": "user", "content": fmt.Sprintf("请开始全自主执行目标：\n%s", cfg.Goal)},
 	}
+	startStep := 1
+	if resume != nil {
+		if len(resume.Messages) > 0 {
+			messages = resume.Messages
+			// 保证 system 仍在
+			hasSys := false
+			for _, m := range messages {
+				if m["role"] == "system" {
+					hasSys = true
+					break
+				}
+			}
+			if !hasSys {
+				messages = append([]map[string]string{{"role": "system", "content": systemPrompt}}, messages...)
+			}
+		}
+		if resume.Step > 0 {
+			startStep = resume.Step + 1
+		}
+		if resume.Scratchpad != "" {
+			// restore via activeScratchpad below
+		}
+	}
 
 	reader := bufio.NewReader(os.Stdin)
-	var activeScratchpad string
+	activeScratchpad := ""
+	if resume != nil {
+		activeScratchpad = resume.Scratchpad
+	}
 
-	for step := 1; step <= cfg.MaxSteps; step++ {
+	persist := func(step int) {
+		saveSession(&SessionState{
+			ID:         sessionID,
+			Goal:       cfg.Goal,
+			Mode:       string(perm),
+			Scratchpad: activeScratchpad,
+			Step:       step,
+			MaxSteps:   cfg.MaxSteps,
+			Messages:   messages,
+			TaskSpec:   cfg.TaskSpec,
+			StartedAt:  time.Now().Format(time.RFC3339),
+			Finished:   false,
+		})
+	}
+
+	for step := startStep; step <= cfg.MaxSteps; step++ {
 		fmt.Printf("\n[Step %d/%d] 正在思考下一步自愈动作...\n", step, cfg.MaxSteps)
-		decision, provName, err := callLLM(cfg.Providers, messages)
+		audit.SetStep(step)
+		messages = BoundMessages(messages, defaultMaxMessages, defaultMaxMsgChars)
+		decision, provName, err := callLLMWithRetry(cfg.Providers, messages, 2)
 		if err != nil {
 			fmt.Printf("[X] 调用上游大模型失败: %v\n", err)
+			audit.Log("llm", "call", provName, false, err.Error())
+			persist(step - 1)
 			break
 		}
+		audit.Log("llm", "call", provName, true, decision.Action)
+		persist(step)
 
 		if decision.Scratchpad != "" {
 			activeScratchpad = decision.Scratchpad
@@ -1102,8 +1444,16 @@ func runAgentLoop(cfg *Config) {
 					continue
 				}
 				fmt.Println("✅ [DoD 验收网关] 真实业务验证完全通过！硬件与服务均达到交付标准！")
+				audit.Log("dod", "pass", cfg.TaskSpec.VerificationCmd, true, "")
 			}
 
+			settleSessionSkills()
+			persist(step)
+			if s := loadSession(sessionID); s != nil {
+				s.Finished = true
+				saveSession(s)
+			}
+			audit.Log("session", "finish", sessionID, true, "")
 			fmt.Println("\n================================================================")
 			fmt.Println("🎉 [成功] 息壤 (XiRang) v4.0 已全自主确认：所有任务与终态验收全部搞定！")
 			fmt.Println("================================================================")
@@ -1113,10 +1463,10 @@ func runAgentLoop(cfg *Config) {
 		// 多线并发批处理 (Parallel Batch Actions)
 		if decision.Action == "batch_actions" && len(decision.BatchActions) > 0 {
 			fmt.Printf("🚀 [多线并发] 启动 %d 个子任务并行执行流水线...\n", len(decision.BatchActions))
-			
+
 			results := make([]string, len(decision.BatchActions))
 			var wg sync.WaitGroup
-			
+
 			for i, sub := range decision.BatchActions {
 				wg.Add(1)
 				go func(idx int, action SubAction) {
@@ -1128,6 +1478,7 @@ func runAgentLoop(cfg *Config) {
 					}
 					results[idx] = fmt.Sprintf("【子任务 #%d [%s] %s %s】:\n%s", idx+1, action.ID, action.Action, statusIcon, resStr)
 					fmt.Printf("   -> 并发子任务 #%d [%s] 完成: %s\n", idx+1, action.Action, statusIcon)
+					audit.Log("action", action.Action, action.Path+action.Command, success, "")
 				}(i, sub)
 			}
 			wg.Wait()
@@ -1180,6 +1531,7 @@ func runAgentLoop(cfg *Config) {
 				ToolArgs: decision.ToolArgs,
 			}
 			res, success := executeSubAction(sub, cfg)
+			audit.Log("action", sub.Action, sub.Path+sub.Command+sub.URL, success, "")
 			preview := res
 			if len(preview) > 300 {
 				preview = preview[:300] + "..."
@@ -1198,29 +1550,28 @@ func runAgentLoop(cfg *Config) {
 	}
 }
 
-// 售后常驻巡检守护函数
+// 售后常驻巡检守护函数（真实探针 + 连续失败阈值 + 自愈冷却）
 func runWatchdogMode(cfg *Config, intervalSec int) {
 	fmt.Println("================================================================")
 	fmt.Println("    🛡️ 息壤 (XiRang) 售后常驻守护巡检系统 (Watchdog Mode)")
-	fmt.Printf("    (全天候监控 · 自动心跳探活 · 故障秒级自主愈合 · 间隔: %d 秒)\n", intervalSec)
+	fmt.Printf("    (真实探针 · 连续失败阈值 · 故障自愈 · 间隔: %d 秒)\n", intervalSec)
 	fmt.Println("================================================================")
 
 	var probes []HealthProbe
 	if cfg.TaskSpec != nil && len(cfg.TaskSpec.HealthProbes) > 0 {
 		probes = cfg.TaskSpec.HealthProbes
 	} else {
-		probes = []HealthProbe{
-			{
-				Name:     "核心进程探活",
-				CheckCmd: "echo HEARTBEAT_OK",
-				FixGoal:  "检测系统关键服务，若异常则自动拉起恢复。",
-			},
-		}
+		probes = defaultRealProbes()
 	}
+
+	failCount := map[string]int{}
+	lastFix := map[string]time.Time{}
+	const failThreshold = 2
+	const fixCooldown = 2 * time.Minute
 
 	fmt.Printf("[*] 当前已激活 %d 个售后监控探针:\n", len(probes))
 	for _, p := range probes {
-		fmt.Printf("   -> 监控项: %s (探测命令: %s)\n", p.Name, p.CheckCmd)
+		fmt.Printf("   -> 监控项: %s (kind=%s target=%s cmd=%s)\n", p.Name, p.Kind, p.Target, p.CheckCmd)
 	}
 	fmt.Println("[*] 售后守护已进入静默常驻监听状态，按 Ctrl+C 可停止。")
 
@@ -1230,21 +1581,37 @@ func runWatchdogMode(cfg *Config, intervalSec int) {
 		timestamp := time.Now().Format("2006-01-02 15:04:05")
 
 		for _, p := range probes {
-			code, out := executeCommand(p.CheckCmd, 15)
-			if code != 0 {
-				fmt.Printf("\n⚠️ [%s 故障预警!] 监控项【%s】探测异常 (退出码: %d)！\n", timestamp, p.Name, code)
-				fmt.Printf("   输出报错: %s\n", strings.TrimSpace(out))
-				fmt.Println("🚨 正在紧急唤醒 息壤 (XiRang) 通用自愈内核进行售后抢修...")
-
-				rescueCfg := *cfg
-				rescueCfg.Goal = fmt.Sprintf("【售后紧急自愈】监控项 '%s' 异常挂掉 (报错: %s)。目标：%s，恢复其正常运行并通过健康探测！", p.Name, strings.TrimSpace(out), p.FixGoal)
-				runAgentLoop(&rescueCfg)
-				fmt.Printf("✅ [%s] 监控项【%s】已全自主抢修完毕并恢复健康！\n\n", time.Now().Format("15:04:05"), p.Name)
+			ok, detail := probeHealth(p)
+			if ok {
+				if failCount[p.Name] > 0 {
+					fmt.Printf("✅ [%s] 监控项【%s】已恢复\n", timestamp, p.Name)
+				}
+				failCount[p.Name] = 0
+				continue
 			}
+			failCount[p.Name]++
+			fmt.Printf("\n⚠️ [%s] 监控项【%s】异常 (连续失败 %d): %s\n", timestamp, p.Name, failCount[p.Name], detail)
+			if failCount[p.Name] < failThreshold {
+				fmt.Println("   （未达连续失败阈值，暂不触发自愈）")
+				continue
+			}
+			if time.Since(lastFix[p.Name]) < fixCooldown {
+				fmt.Println("   （自愈冷却中，跳过本轮）")
+				continue
+			}
+			lastFix[p.Name] = time.Now()
+			fmt.Println("🚨 正在紧急唤醒 息壤 自愈内核进行售后抢修...")
+			rescueCfg := *cfg
+			rescueCfg.Goal = fmt.Sprintf("【售后紧急自愈】监控项 '%s' 异常 (%s)。目标：%s，恢复其正常运行并通过健康探测！", p.Name, detail, p.FixGoal)
+			runAgentLoopWithSession(&rescueCfg, parsePermissionMode(cfg.Permission), newSessionID(), nil)
+			fmt.Printf("✅ [%s] 监控项【%s】自愈流程结束\n\n", time.Now().Format("15:04:05"), p.Name)
 		}
 
 		if checkCount%10 == 1 {
-			fmt.Printf("[%s] 售后巡检正常运行中 (第 %d 次心跳健康)...\n", timestamp, checkCount)
+			fmt.Printf("[%s] 售后巡检正常运行中 (第 %d 次心跳)...\n", timestamp, checkCount)
+		}
+		if intervalSec < 5 {
+			intervalSec = 5
 		}
 		time.Sleep(time.Duration(intervalSec) * time.Second)
 	}
@@ -1287,20 +1654,29 @@ func runDoctorMode(cfg *Config) {
 		// 优先尝试本地已有经验指纹快速命中 (Fast-Path)
 		if fastSkill := findFastSkill(input); fastSkill != nil {
 			fmt.Printf("\n⚡ [经验秒级命中!] 识别到已沉淀的已知问题特征: \"%s\"\n", fastSkill.Pattern)
-			fmt.Printf("   -> 正在直接调取本地经过验证的专属脚本: %s (%s)...\n", fastSkill.ScriptPath, fastSkill.Description)
-			code, out := executeCommand(fastSkill.ScriptPath, 120)
-			if code == 0 {
-				fmt.Printf("✅ [秒级自愈成功!] 已直接通过本地经验修复该问题 (耗时 0.2s，未消耗 Token)！\n回显:\n%s\n", out)
-				continue
-			} else {
+			fmt.Printf("   -> 候选脚本: %s (%s)\n", fastSkill.ScriptPath, fastSkill.Description)
+			fmt.Print("   -> 是否立即执行该本地脚本? [Y/n]: ")
+			confirm, _ := reader.ReadString('\n')
+			confirm = strings.TrimSpace(confirm)
+			if confirm == "" || strings.EqualFold(confirm, "y") || strings.EqualFold(confirm, "yes") {
+				fmt.Printf("   -> 正在直接调取本地经过验证的专属脚本: %s ...\n", fastSkill.ScriptPath)
+				code, out := executeCommand(fastSkill.ScriptPath, 120)
+				if code == 0 {
+					fmt.Printf("✅ [秒级自愈成功!] 已直接通过本地经验修复该问题 (未消耗 Token)！\n回显:\n%s\n", out)
+					// 强化已有指纹（更新 meta 时间戳语义：重写确保存在）
+					_ = saveFastSkill(fastSkill.Name, fastSkill.Pattern, fastSkill.ScriptPath, fastSkill.Description)
+					continue
+				}
 				fmt.Printf("⚠️ 本地快速脚本执行未完全解决，正在无缝转入云端大模型进行深度自愈推演...\n")
+			} else {
+				fmt.Println("   -> 已跳过本地脚本，转入云端大模型深度排障...")
 			}
 		}
 
 		fmt.Println("\n🚨 收到售后报修请求！息壤 正在连线自愈大脑接管排障...")
 		cureCfg := *cfg
 		cureCfg.Goal = fmt.Sprintf("【用户售后报修求助】用户报告了以下系统故障/报错信息：\n\"%s\"\n请深入分析该错误原因，利用系统指令探查现场，定位根因并全自主执行修复，并将可复用的排障脚本沉淀到 .xirang/scripts/，最终向用户反馈排查结果与解决方案。", input)
-		runAgentLoop(&cureCfg)
+		runAgentLoopWithSession(&cureCfg, parsePermissionMode(cfg.Permission), newSessionID(), nil)
 		fmt.Println("\n✅ [售后处理完毕] 该问题已诊断修复完成。若仍有其他异常，可继续输入，随时为您服务！")
 	}
 }

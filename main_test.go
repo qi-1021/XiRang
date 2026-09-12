@@ -8,18 +8,20 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestCheckSafetyFilter(t *testing.T) {
 	tests := []struct {
-		name          string
-		cmd           string
-		forbidden     []string
-		expectedSafe  bool
+		name         string
+		cmd          string
+		forbidden    []string
+		expectedSafe bool
 	}{
 		{
 			name:         "Safe Command",
@@ -67,10 +69,16 @@ func TestCheckPathGuard(t *testing.T) {
 		expectedSafe bool
 	}{
 		{
-			name:         "No restrictions",
+			name:         "Empty allowlist defaults to cwd sandbox",
 			target:       subDir,
 			allowed:      nil,
 			expectedSafe: true,
+		},
+		{
+			name:         "Empty allowlist blocks outside cwd",
+			target:       outDir,
+			allowed:      nil,
+			expectedSafe: false,
 		},
 		{
 			name:         "Inside allowed path",
@@ -270,7 +278,9 @@ func TestRollbackTrackCreatedFile(t *testing.T) {
 	origRollbackStack := rollbackStack
 	origBackupDir := backupDir
 	defer func() {
+		rollbackMu.Lock()
 		rollbackStack = origRollbackStack
+		rollbackMu.Unlock()
 		backupDir = origBackupDir
 	}()
 
@@ -281,7 +291,9 @@ func TestRollbackTrackCreatedFile(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	backupDir = filepath.Join(tempDir, "backups")
+	rollbackMu.Lock()
 	rollbackStack = nil
+	rollbackMu.Unlock()
 
 	// File does not exist initially
 	newFilePath := filepath.Join(tempDir, "newly_created.txt")
@@ -304,6 +316,126 @@ func TestRollbackTrackCreatedFile(t *testing.T) {
 	// Verify newly created file was deleted
 	if _, err := os.Stat(newFilePath); !os.IsNotExist(err) {
 		t.Errorf("newly created file should have been deleted during rollback")
+	}
+}
+
+func TestRollbackCrossProcessFromIndex(t *testing.T) {
+	origRollbackStack := rollbackStack
+	origBackupDir := backupDir
+	defer func() {
+		rollbackMu.Lock()
+		rollbackStack = origRollbackStack
+		rollbackMu.Unlock()
+		backupDir = origBackupDir
+	}()
+
+	tempDir, err := os.MkdirTemp("", "xirang_test_rollback_xproc")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	backupDir = filepath.Join(tempDir, "backups")
+	rollbackMu.Lock()
+	rollbackStack = nil
+	rollbackMu.Unlock()
+
+	// Simulate previous process wrote a file and persisted index
+	newFilePath := filepath.Join(tempDir, "cross_proc.txt")
+	trackFileBackup(newFilePath)
+	if err := os.WriteFile(newFilePath, []byte("x"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(backupDir, "index.json")); err != nil {
+		t.Fatalf("expected rollback index on disk: %v", err)
+	}
+
+	// Simulate new process: clear memory stack only
+	rollbackMu.Lock()
+	rollbackStack = nil
+	rollbackMu.Unlock()
+
+	executeRollback()
+
+	if _, err := os.Stat(newFilePath); !os.IsNotExist(err) {
+		t.Errorf("cross-process rollback should delete file via index.json")
+	}
+}
+
+func TestTrackFileBackupConcurrent(t *testing.T) {
+	origRollbackStack := rollbackStack
+	origBackupDir := backupDir
+	defer func() {
+		rollbackMu.Lock()
+		rollbackStack = origRollbackStack
+		rollbackMu.Unlock()
+		backupDir = origBackupDir
+	}()
+
+	tempDir, err := os.MkdirTemp("", "xirang_test_rollback_race")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	backupDir = filepath.Join(tempDir, "backups")
+	rollbackMu.Lock()
+	rollbackStack = nil
+	rollbackMu.Unlock()
+
+	const n = 32
+	done := make(chan struct{}, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			path := filepath.Join(tempDir, filepath.Join(tempDir, fmt.Sprintf("f_%d.txt", i)))
+			// use nested unique file under tempDir
+			path = filepath.Join(tempDir, fmt.Sprintf("f_%d.txt", i))
+			trackFileBackup(path)
+			_ = os.WriteFile(path, []byte("data"), 0644)
+		}(i)
+	}
+	for i := 0; i < n; i++ {
+		<-done
+	}
+
+	rollbackMu.Lock()
+	count := len(rollbackStack)
+	rollbackMu.Unlock()
+	if count < n {
+		t.Fatalf("expected at least %d rollback ops after concurrent track, got %d", n, count)
+	}
+}
+
+func TestDeriveSkillPatternAndAutoSave(t *testing.T) {
+	origScriptsDir := scriptsDir
+	origSession := sessionScripts
+	defer func() {
+		scriptsDir = origScriptsDir
+		sessionScripts = origSession
+	}()
+
+	tempDir, err := os.MkdirTemp("", "xirang_test_autosave")
+	if err != nil {
+		t.Fatalf("temp: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	scriptsDir = filepath.Join(tempDir, "scripts")
+
+	pattern := deriveSkillPattern("Error: address already in use while binding", "fix_port.sh")
+	if pattern == "" || !strings.Contains(pattern, "address already in use") {
+		t.Fatalf("unexpected pattern: %q", pattern)
+	}
+
+	scriptPath := filepath.Join(scriptsDir, "fix_port.sh")
+	os.MkdirAll(scriptsDir, 0755)
+	maybeAutoSaveSkill(scriptPath, "echo address already in use")
+	if _, err := os.Stat(scriptPath + ".meta.json"); err != nil {
+		t.Fatalf("expected auto meta: %v", err)
+	}
+	found := findFastSkill("server failed: address already in use")
+	if found == nil {
+		t.Fatalf("expected fast skill after auto save")
 	}
 }
 
