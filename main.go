@@ -40,9 +40,12 @@ type Milestone struct {
 
 // 售后健康巡检探针 (Health Check & Watchdog)
 type HealthProbe struct {
-	Name     string `json:"name"`      // 服务/组件名称
-	CheckCmd string `json:"check_cmd"` // 快速健康检查命令 (退出码 0 为正常)
-	FixGoal  string `json:"fix_goal"`  // 一旦异常时触发的自愈排错目标
+	Name       string `json:"name"`                // 服务/组件名称
+	Kind       string `json:"kind,omitempty"`      // cmd|tcp|http|file，默认 cmd
+	Target     string `json:"target,omitempty"`    // host:port / URL / 文件路径
+	CheckCmd   string `json:"check_cmd,omitempty"` // 快速健康检查命令 (kind=cmd 时)
+	FixGoal    string `json:"fix_goal,omitempty"`  // 一旦异常时触发的自愈排错目标
+	TimeoutSec int    `json:"timeout_sec,omitempty"`
 }
 
 // 动态外挂工具定义 (MCP/CLI Plugin)
@@ -90,6 +93,7 @@ type Config struct {
 	MaxSteps    int                `json:"max_steps"`
 	TimeoutSec  int                `json:"timeout_sec"`
 	ContextVars map[string]string  `json:"context_vars"`
+	Permission  string             `json:"permission,omitempty"` // readonly|assist|auto
 }
 
 // 单个原子动作 (用于单步或并发 batch_actions)
@@ -773,6 +777,13 @@ func downloadFile(url, destPath string) (bool, string) {
 
 // 单个子动作执行器 (供单步或并发批处理复用)
 func executeSubAction(sub SubAction, cfg *Config) (string, bool) {
+	perm := PermAssist
+	if cfg != nil && cfg.Permission != "" {
+		perm = parsePermissionMode(cfg.Permission)
+	}
+	if ok, reason := requirePermission(perm, sub.Action); !ok {
+		return reason, false
+	}
 	switch sub.Action {
 	case "run_command":
 		var forbidden []string
@@ -1009,7 +1020,38 @@ func main() {
 	skillsFlag := flag.Bool("skills", false, "查看并管理本地已沉淀的经验脚本与故障指纹库 (.xirang/scripts/)")
 	forgeFlag := flag.Bool("forge", false, "启动息壤工坊图形创作控制台 (XiRang Studio GUI)")
 	guiAliasFlag := flag.Bool("gui", false, "启动息壤工坊图形创作控制台 (同 -forge)")
+	consoleFlag := flag.Bool("console", false, "启动 CLI/TUI 息壤操作台")
+	modeFlag := flag.String("mode", "assist", "权限模式: readonly | assist | auto")
+	resumeFlag := flag.String("resume", "", "从会话 ID 或 latest 恢复执行")
+	validateSpecFlag := flag.Bool("validate-spec", false, "仅校验任务规约结构后退出")
 	flag.Parse()
+
+	if *validateSpecFlag {
+		var spec TaskSpecification
+		var err error
+		if *specFlag != "" {
+			if data, readErr := os.ReadFile(*specFlag); readErr == nil {
+				err = json.Unmarshal(data, &spec)
+			} else {
+				err = json.Unmarshal([]byte(*specFlag), &spec)
+			}
+		}
+		if err != nil {
+			fmt.Printf("[X] 解析规约失败: %v\n", err)
+			os.Exit(1)
+		}
+		errs := validateTaskSpec(&spec)
+		printSpecValidation(errs)
+		if len(errs) > 0 {
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *skillsFlag {
+		runSkillsCLI(flag.Args())
+		return
+	}
 
 	if *forgeFlag || *guiAliasFlag {
 		server := gui.NewForgeServer(".")
@@ -1032,7 +1074,9 @@ func main() {
 		MaxSteps:    40,
 		TimeoutSec:  300,
 		ContextVars: make(map[string]string),
+		Permission:  *modeFlag,
 	}
+	permMode := parsePermissionMode(*modeFlag)
 
 	// 1. 优先尝试解密还原由 xirang-builder 熔炼嵌入的开发者保密模型配置
 	if protectedCfg := loadEmbeddedProtectedConfig(); protectedCfg != nil {
@@ -1069,15 +1113,6 @@ func main() {
 				cfg.Goal = spec.Goal
 			}
 		}
-	}
-
-	// 处理 -skills (经验指纹查看)
-	if *skillsFlag {
-		fmt.Println("================================================================")
-		fmt.Println("📜 息壤 (XiRang) 本地经验与故障指纹资产库 (.xirang/scripts/)")
-		fmt.Println("================================================================")
-		fmt.Println(loadEvolvedSkills())
-		return
 	}
 
 	// 3. 外部 JSON 配置文件 (优先 xirang_config.json，自动兼容 zen_config.json)
@@ -1191,10 +1226,45 @@ func main() {
 		}
 	}
 
-	runAgentLoop(&cfg)
+	// 规约结构校验（警告不阻断，除非已有 -validate-spec）
+	if cfg.TaskSpec != nil {
+		printSpecValidation(validateTaskSpec(cfg.TaskSpec))
+	}
+
+	if *consoleFlag {
+		runConsole(&cfg, permMode)
+		return
+	}
+
+	if *resumeFlag != "" {
+		st := loadSession(*resumeFlag)
+		if st == nil {
+			fmt.Printf("[X] 无法恢复会话: %s\n", *resumeFlag)
+			os.Exit(1)
+		}
+		if st.Goal != "" && cfg.Goal == "" {
+			cfg.Goal = st.Goal
+		}
+		if st.TaskSpec != nil {
+			cfg.TaskSpec = st.TaskSpec
+		}
+		fmt.Printf("[*] 已恢复会话 %s (step=%d)\n", st.ID, st.Step)
+		runAgentLoopWithSession(&cfg, permMode, st.ID, st)
+		return
+	}
+
+	runAgentLoopWithSession(&cfg, permMode, newSessionID(), nil)
 }
 
 func runAgentLoop(cfg *Config) {
+	runAgentLoopWithSession(cfg, parsePermissionMode(cfg.Permission), newSessionID(), nil)
+}
+
+func runAgentLoopWithSession(cfg *Config, perm PermissionMode, sessionID string, resume *SessionState) {
+	cfg.Permission = string(perm)
+	audit := NewAuditLogger(sessionID, perm)
+	audit.Log("session", "start", sessionID, true, cfg.Goal)
+
 	fmt.Println("================================================================")
 	fmt.Println("    🌱 息壤 (XiRang) v4.0: 工业级全并发·生生不息·自愈演进系统智能体")
 	fmt.Println("    (多线并发批处理 · 黑板记忆剪枝 · 动态工具箱 · 事务日志撤销)")
@@ -1209,6 +1279,7 @@ func runAgentLoop(cfg *Config) {
 		fmt.Printf("[*] 可用驱动器: %v\n", drives)
 	}
 	fmt.Printf("[*] 核心目标: %s\n", cfg.Goal)
+	fmt.Printf("[*] 权限模式: %s | 会话: %s\n", perm, sessionID)
 
 	if cfg.TaskSpec != nil {
 		fmt.Printf("[*] 绑定任务规约: %s (阶段数: %d)\n", cfg.TaskSpec.TaskName, len(cfg.TaskSpec.Milestones))
@@ -1290,17 +1361,64 @@ func runAgentLoop(cfg *Config) {
 		{"role": "system", "content": systemPrompt},
 		{"role": "user", "content": fmt.Sprintf("请开始全自主执行目标：\n%s", cfg.Goal)},
 	}
+	startStep := 1
+	if resume != nil {
+		if len(resume.Messages) > 0 {
+			messages = resume.Messages
+			// 保证 system 仍在
+			hasSys := false
+			for _, m := range messages {
+				if m["role"] == "system" {
+					hasSys = true
+					break
+				}
+			}
+			if !hasSys {
+				messages = append([]map[string]string{{"role": "system", "content": systemPrompt}}, messages...)
+			}
+		}
+		if resume.Step > 0 {
+			startStep = resume.Step + 1
+		}
+		if resume.Scratchpad != "" {
+			// restore via activeScratchpad below
+		}
+	}
 
 	reader := bufio.NewReader(os.Stdin)
-	var activeScratchpad string
+	activeScratchpad := ""
+	if resume != nil {
+		activeScratchpad = resume.Scratchpad
+	}
 
-	for step := 1; step <= cfg.MaxSteps; step++ {
+	persist := func(step int) {
+		saveSession(&SessionState{
+			ID:         sessionID,
+			Goal:       cfg.Goal,
+			Mode:       string(perm),
+			Scratchpad: activeScratchpad,
+			Step:       step,
+			MaxSteps:   cfg.MaxSteps,
+			Messages:   messages,
+			TaskSpec:   cfg.TaskSpec,
+			StartedAt:  time.Now().Format(time.RFC3339),
+			Finished:   false,
+		})
+	}
+
+	for step := startStep; step <= cfg.MaxSteps; step++ {
 		fmt.Printf("\n[Step %d/%d] 正在思考下一步自愈动作...\n", step, cfg.MaxSteps)
-		decision, provName, err := callLLM(cfg.Providers, messages)
+		audit.SetStep(step)
+		messages = BoundMessages(messages, defaultMaxMessages, defaultMaxMsgChars)
+		decision, provName, err := callLLMWithRetry(cfg.Providers, messages, 2)
 		if err != nil {
 			fmt.Printf("[X] 调用上游大模型失败: %v\n", err)
+			audit.Log("llm", "call", provName, false, err.Error())
+			persist(step - 1)
 			break
 		}
+		audit.Log("llm", "call", provName, true, decision.Action)
+		persist(step)
 
 		if decision.Scratchpad != "" {
 			activeScratchpad = decision.Scratchpad
@@ -1326,9 +1444,16 @@ func runAgentLoop(cfg *Config) {
 					continue
 				}
 				fmt.Println("✅ [DoD 验收网关] 真实业务验证完全通过！硬件与服务均达到交付标准！")
+				audit.Log("dod", "pass", cfg.TaskSpec.VerificationCmd, true, "")
 			}
 
 			settleSessionSkills()
+			persist(step)
+			if s := loadSession(sessionID); s != nil {
+				s.Finished = true
+				saveSession(s)
+			}
+			audit.Log("session", "finish", sessionID, true, "")
 			fmt.Println("\n================================================================")
 			fmt.Println("🎉 [成功] 息壤 (XiRang) v4.0 已全自主确认：所有任务与终态验收全部搞定！")
 			fmt.Println("================================================================")
@@ -1353,6 +1478,7 @@ func runAgentLoop(cfg *Config) {
 					}
 					results[idx] = fmt.Sprintf("【子任务 #%d [%s] %s %s】:\n%s", idx+1, action.ID, action.Action, statusIcon, resStr)
 					fmt.Printf("   -> 并发子任务 #%d [%s] 完成: %s\n", idx+1, action.Action, statusIcon)
+					audit.Log("action", action.Action, action.Path+action.Command, success, "")
 				}(i, sub)
 			}
 			wg.Wait()
@@ -1405,6 +1531,7 @@ func runAgentLoop(cfg *Config) {
 				ToolArgs: decision.ToolArgs,
 			}
 			res, success := executeSubAction(sub, cfg)
+			audit.Log("action", sub.Action, sub.Path+sub.Command+sub.URL, success, "")
 			preview := res
 			if len(preview) > 300 {
 				preview = preview[:300] + "..."
@@ -1423,29 +1550,28 @@ func runAgentLoop(cfg *Config) {
 	}
 }
 
-// 售后常驻巡检守护函数
+// 售后常驻巡检守护函数（真实探针 + 连续失败阈值 + 自愈冷却）
 func runWatchdogMode(cfg *Config, intervalSec int) {
 	fmt.Println("================================================================")
 	fmt.Println("    🛡️ 息壤 (XiRang) 售后常驻守护巡检系统 (Watchdog Mode)")
-	fmt.Printf("    (全天候监控 · 自动心跳探活 · 故障秒级自主愈合 · 间隔: %d 秒)\n", intervalSec)
+	fmt.Printf("    (真实探针 · 连续失败阈值 · 故障自愈 · 间隔: %d 秒)\n", intervalSec)
 	fmt.Println("================================================================")
 
 	var probes []HealthProbe
 	if cfg.TaskSpec != nil && len(cfg.TaskSpec.HealthProbes) > 0 {
 		probes = cfg.TaskSpec.HealthProbes
 	} else {
-		probes = []HealthProbe{
-			{
-				Name:     "核心进程探活",
-				CheckCmd: "echo HEARTBEAT_OK",
-				FixGoal:  "检测系统关键服务，若异常则自动拉起恢复。",
-			},
-		}
+		probes = defaultRealProbes()
 	}
+
+	failCount := map[string]int{}
+	lastFix := map[string]time.Time{}
+	const failThreshold = 2
+	const fixCooldown = 2 * time.Minute
 
 	fmt.Printf("[*] 当前已激活 %d 个售后监控探针:\n", len(probes))
 	for _, p := range probes {
-		fmt.Printf("   -> 监控项: %s (探测命令: %s)\n", p.Name, p.CheckCmd)
+		fmt.Printf("   -> 监控项: %s (kind=%s target=%s cmd=%s)\n", p.Name, p.Kind, p.Target, p.CheckCmd)
 	}
 	fmt.Println("[*] 售后守护已进入静默常驻监听状态，按 Ctrl+C 可停止。")
 
@@ -1455,21 +1581,37 @@ func runWatchdogMode(cfg *Config, intervalSec int) {
 		timestamp := time.Now().Format("2006-01-02 15:04:05")
 
 		for _, p := range probes {
-			code, out := executeCommand(p.CheckCmd, 15)
-			if code != 0 {
-				fmt.Printf("\n⚠️ [%s 故障预警!] 监控项【%s】探测异常 (退出码: %d)！\n", timestamp, p.Name, code)
-				fmt.Printf("   输出报错: %s\n", strings.TrimSpace(out))
-				fmt.Println("🚨 正在紧急唤醒 息壤 (XiRang) 通用自愈内核进行售后抢修...")
-
-				rescueCfg := *cfg
-				rescueCfg.Goal = fmt.Sprintf("【售后紧急自愈】监控项 '%s' 异常挂掉 (报错: %s)。目标：%s，恢复其正常运行并通过健康探测！", p.Name, strings.TrimSpace(out), p.FixGoal)
-				runAgentLoop(&rescueCfg)
-				fmt.Printf("✅ [%s] 监控项【%s】已全自主抢修完毕并恢复健康！\n\n", time.Now().Format("15:04:05"), p.Name)
+			ok, detail := probeHealth(p)
+			if ok {
+				if failCount[p.Name] > 0 {
+					fmt.Printf("✅ [%s] 监控项【%s】已恢复\n", timestamp, p.Name)
+				}
+				failCount[p.Name] = 0
+				continue
 			}
+			failCount[p.Name]++
+			fmt.Printf("\n⚠️ [%s] 监控项【%s】异常 (连续失败 %d): %s\n", timestamp, p.Name, failCount[p.Name], detail)
+			if failCount[p.Name] < failThreshold {
+				fmt.Println("   （未达连续失败阈值，暂不触发自愈）")
+				continue
+			}
+			if time.Since(lastFix[p.Name]) < fixCooldown {
+				fmt.Println("   （自愈冷却中，跳过本轮）")
+				continue
+			}
+			lastFix[p.Name] = time.Now()
+			fmt.Println("🚨 正在紧急唤醒 息壤 自愈内核进行售后抢修...")
+			rescueCfg := *cfg
+			rescueCfg.Goal = fmt.Sprintf("【售后紧急自愈】监控项 '%s' 异常 (%s)。目标：%s，恢复其正常运行并通过健康探测！", p.Name, detail, p.FixGoal)
+			runAgentLoopWithSession(&rescueCfg, parsePermissionMode(cfg.Permission), newSessionID(), nil)
+			fmt.Printf("✅ [%s] 监控项【%s】自愈流程结束\n\n", time.Now().Format("15:04:05"), p.Name)
 		}
 
 		if checkCount%10 == 1 {
-			fmt.Printf("[%s] 售后巡检正常运行中 (第 %d 次心跳健康)...\n", timestamp, checkCount)
+			fmt.Printf("[%s] 售后巡检正常运行中 (第 %d 次心跳)...\n", timestamp, checkCount)
+		}
+		if intervalSec < 5 {
+			intervalSec = 5
 		}
 		time.Sleep(time.Duration(intervalSec) * time.Second)
 	}
@@ -1534,7 +1676,7 @@ func runDoctorMode(cfg *Config) {
 		fmt.Println("\n🚨 收到售后报修请求！息壤 正在连线自愈大脑接管排障...")
 		cureCfg := *cfg
 		cureCfg.Goal = fmt.Sprintf("【用户售后报修求助】用户报告了以下系统故障/报错信息：\n\"%s\"\n请深入分析该错误原因，利用系统指令探查现场，定位根因并全自主执行修复，并将可复用的排障脚本沉淀到 .xirang/scripts/，最终向用户反馈排查结果与解决方案。", input)
-		runAgentLoop(&cureCfg)
+		runAgentLoopWithSession(&cureCfg, parsePermissionMode(cfg.Permission), newSessionID(), nil)
 		fmt.Println("\n✅ [售后处理完毕] 该问题已诊断修复完成。若仍有其他异常，可继续输入，随时为您服务！")
 	}
 }

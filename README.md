@@ -67,6 +67,26 @@ xirang --rollback
 
 # 8. 启动息壤工坊可视化创作控制台 (Web GUI)
 xirang -forge  # 或 xirang -gui
+
+# 9. CLI/TUI 操作台（状态/探针/技能/回滚/审计/运行 一站式）
+xirang -console
+xirang -console -mode auto -spec xirang_task_spec.json
+
+# 10. 权限分级: readonly | assist(默认) | auto
+xirang -task "..." -mode readonly
+
+# 11. 会话恢复（崩溃后续跑）
+xirang -resume latest
+xirang -resume s_123456
+
+# 12. 仅校验任务规约结构
+xirang -spec xirang_task_spec.json -validate-spec
+
+# 13. 技能库管理
+xirang -skills
+xirang -skills show FixPort
+xirang -skills disable FixPort
+xirang -skills export ./skills_backup
 ```
 
 ### 2. 模型通道配置原则 (安全边界守卫)

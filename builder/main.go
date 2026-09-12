@@ -43,9 +43,12 @@ type CustomTool struct {
 }
 
 type HealthProbe struct {
-	Name     string `json:"name"`
-	CheckCmd string `json:"check_cmd"`
-	FixGoal  string `json:"fix_goal"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind,omitempty"`
+	Target    string `json:"target,omitempty"`
+	CheckCmd  string `json:"check_cmd,omitempty"`
+	FixGoal   string `json:"fix_goal,omitempty"`
+	TimeoutSec int   `json:"timeout_sec,omitempty"`
 }
 
 type TaskSpecification struct {
